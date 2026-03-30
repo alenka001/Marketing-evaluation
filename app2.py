@@ -1,92 +1,95 @@
 import streamlit as st
 import pandas as pd
 
-# Page Config
-st.set_page_config(page_title="Zalando Tier Manager", layout="wide")
-st.title("👗 Zalando Marketing: Tier Segmentation Tool")
-st.info("Upload your weekly reports to re-calculate TOP, MEDIUM, and LOW tiers.")
+st.set_page_config(page_title="Zalando Marketing Specialist", layout="wide")
+st.title("📊 Zalando Campaign Optimizer")
 
-# --- 1. SIDEBAR: DATA INPUT ---
+# --- 1. SIDEBAR: DATA INPUT & COLUMN MAPPING ---
 with st.sidebar:
-    st.header("Data Sources")
+    st.header("1. Upload Files")
     attalos_file = st.file_uploader("Attalos Profit CSV", type="csv")
-    stock_file = st.file_uploader("Zalando Stock CSV (ZFS/PF)", type="csv")
+    stock_file = st.file_uploader("Zalando Stock CSV", type="csv")
     
     st.divider()
-    st.header("Threshold Settings")
+    st.header("2. Logic Settings")
     min_stock_top = st.number_input("Min Stock for TOP", value=15)
     min_profit_top = st.number_input("Min Net Profit (€) for TOP", value=5.0)
-    min_stock_med = st.number_input("Min Stock for MED", value=5)
 
 # --- 2. DATA PROCESSING ---
 if attalos_file and stock_file:
-    # Load and Merge
     df_p = pd.read_csv(attalos_file)
     df_s = pd.read_csv(stock_file)
     
-    # Ensure SKUs are strings to avoid scientific notation
-    df_p['SKU'] = df_p['SKU'].astype(str)
-    df_s['SKU'] = df_s['SKU'].astype(str)
+    # DYNAMIC MAPPING: Let the user choose the columns if they differ
+    st.sidebar.subheader("3. Map Columns")
+    sku_col = st.sidebar.selectbox("SKU Column (Attalos)", df_p.columns, index=0)
+    profit_col = st.sidebar.selectbox("Profit Column (Attalos)", df_p.columns)
+    gender_col = st.sidebar.selectbox("Gender Column (Stock)", df_s.columns)
     
-    # Merge on SKU
-    df = pd.merge(df_p, df_s, on='SKU', how='inner')
+    # Merge and Clean
+    df_p[sku_col] = df_p[sku_col].astype(str).str.strip()
+    df_s['SKU'] = df_s['SKU'].astype(str).str.strip()
     
-    # Calculate Total Stock across both warehouses
-    df['Total_Stock'] = df['ZFS_Stock'] + df['PF_Stock']
+    df = pd.merge(df_p, df_s, left_on=sku_col, right_on='SKU', how='inner')
+    
+    # Logic: Total Stock (ZFS + PF)
+    # Using .get() to avoid errors if one warehouse column is missing
+    df['Total_Stock'] = df.get('ZFS_Stock', 0) + df.get('PF_Stock', 0)
 
-    # Logic: Categorize Tiers
+    # Logic: Campaign Tiers
     def assign_tier(row):
-        if row['Total_Stock'] >= min_stock_top and row['Net_Profit'] >= min_profit_top:
+        if row['Total_Stock'] >= min_stock_top and row[profit_col] >= min_profit_top:
             return 'TOP'
-        elif row['Total_Stock'] >= min_stock_med and row['Net_Profit'] > 0:
+        elif row['Total_Stock'] >= 5 and row[profit_col] > 0:
             return 'MEDIUM'
         else:
             return 'LOW'
 
-    # Logic: Group Genders (Female vs. Male/Unisex)
-    def assign_group(gender):
-        g = str(gender).lower()
-        if 'female' in g or 'dam' in g:
+    # Logic: Gender Grouping (Female vs Combined Male/Unisex)
+    def assign_group(val):
+        val = str(val).upper()
+        if 'FEMALE' in val or 'DAM' in val or 'WMS' in val:
             return 'FEMALE'
         else:
             return 'MALE_UNISEX'
 
     df['Tier'] = df.apply(assign_tier, axis=1)
-    df['Group'] = df['Gender'].apply(assign_group)
+    df['Group'] = df[gender_col].apply(assign_group)
+    df['Campaign_Key'] = df['Group'] + "_" + df['Tier']
 
-    # --- 3. DASHBOARD DISPLAY ---
-    groups = ['FEMALE', 'MALE_UNISEX']
-    tiers = ['TOP', 'MEDIUM', 'LOW']
+    # --- 3. DASHBOARD OUTPUT ---
+    st.header("Weekly SKU Exports")
+    
+    # Define the 6 specific campaign buckets
+    campaigns = [
+        ('FEMALE', 'TOP'), ('FEMALE', 'MEDIUM'), ('FEMALE', 'LOW'),
+        ('MALE_UNISEX', 'TOP'), ('MALE_UNISEX', 'MEDIUM'), ('MALE_UNISEX', 'LOW')
+    ]
 
-    for group in groups:
-        st.header(f"📂 {group} Campaigns")
-        cols = st.columns(3)
+    # Display in a grid
+    rows = [st.columns(3), st.columns(3)]
+    for idx, (group, tier) in enumerate(campaigns):
+        col_idx = idx % 3
+        row_idx = idx // 3
         
-        for i, tier in enumerate(tiers):
-            with cols[i]:
-                # Filter data for this specific bucket
-                subset = df[(df['Group'] == group) & (df['Tier'] == tier)]
-                sku_list_str = ",".join(subset['SKU'].tolist())
-                
-                st.subheader(f"{tier} Tier")
-                st.metric("SKU Count", len(subset))
-                
-                # Option A: Download Button
-                csv = subset[['SKU']].to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    label=f"📥 Download {tier} CSV",
-                    data=csv,
-                    file_name=f"{group}_{tier}_skus.csv",
-                    mime="text/csv",
-                    key=f"dl_{group}_{tier}"
-                )
-                
-                # Option B: Quick Copy (Great for small updates)
-                st.text_area(f"Copy {tier} SKUs:", value=sku_list_str, height=100, key=f"txt_{group}_{tier}")
+        with rows[row_idx][col_idx]:
+            key = f"{group}_{tier}"
+            subset = df[df['Campaign_Key'] == key]
+            
+            st.subheader(f"{group} - {tier}")
+            st.metric("Count", len(subset))
+            
+            # Formatted string for quick copy-paste into Zalando
+            sku_string = ",".join(subset['SKU'].tolist())
+            st.text_area("Copy SKUs:", value=sku_string, height=100, key=f"text_{key}")
+            
+            # Download Button
+            csv = subset[['SKU']].to_csv(index=False, header=False).encode('utf-8')
+            st.download_button(f"📥 Download {tier}", csv, f"{key}.csv", "text/csv")
 
     st.divider()
-    st.subheader("Full Inventory Analysis Preview")
-    st.dataframe(df[['SKU', 'Gender', 'Total_Stock', 'Net_Profit', 'Tier', 'Group']], use_container_width=True)
+    with st.expander("🔍 View Raw Analysis Table"):
+        st.dataframe(df[[sku_col, gender_col, 'Total_Stock', profit_col, 'Tier', 'Group']])
 
 else:
-    st.warning("Please upload both the Attalos Profit CSV and the Zalando Stock CSV in the sidebar to begin.")
+    st.info("👋 Welcome! Please upload your Attalos and Zalando CSVs in the sidebar to generate your weekly campaigns.")
