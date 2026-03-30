@@ -57,21 +57,32 @@ if curr_attalos and z_marketing and stock_file:
     # 1. Process Marketing (Swedemount Report)
     m_sku_col = 'ConfigSKU' if 'ConfigSKU' in df_m.columns else df_m.columns[6]
     df_m['Article_Key'] = df_m[m_sku_col].apply(get_article_key)
-    df_m['GMV_Val'] = clean_numeric(df_m['GMV'])
-    df_m['Spend_Val'] = clean_numeric(df_m['Budgetspent'])
+    df_m['GMV_Val'] = clean_numeric(df_m['GMV']) if 'GMV' in df_m.columns else 0
+    df_m['Spend_Val'] = clean_numeric(df_m['Budgetspent']) if 'Budgetspent' in df_m.columns else 0
     df_m_agg = df_m.groupby('Article_Key').agg({'GMV_Val': 'sum', 'Spend_Val': 'sum'}).reset_index()
 
-    # 2. Process Inventory (Summarize Sizes to Article)
+    # 2. Process Inventory (Dynamic Column Finding)
     s_sku_col = next((c for c in df_s.columns if 'SKU' in c.upper()), df_s.columns[0])
+    # Find Gender column dynamically
+    s_gen_col = next((c for c in df_s.columns if any(k in c.upper() for k in ['GENDER', 'GESCHLECHT', 'GENDER'])), None)
+    
     df_s['Article_Key'] = df_s[s_sku_col].apply(get_article_key)
     df_s['ZFS_Clean'] = clean_numeric(df_s['ZFS_Stock']) if 'ZFS_Stock' in df_s.columns else 0
     df_s['PF_Clean'] = clean_numeric(df_s['PF_Stock']) if 'PF_Stock' in df_s.columns else 0
-    df_s_agg = df_s.groupby(['Article_Key', 'Gender']).agg({'ZFS_Clean': 'sum', 'PF_Clean': 'sum'}).reset_index()
+    
+    # If gender column is missing, assign a dummy 'Unisex' to everything
+    if s_gen_col:
+        df_s['Gender_Clean'] = df_s[s_gen_col].fillna('Unisex')
+    else:
+        df_s['Gender_Clean'] = 'Unisex'
+
+    # Summing Stock to Article Level (using the found/created Gender_Clean column)
+    df_s_agg = df_s.groupby(['Article_Key', 'Gender_Clean']).agg({'ZFS_Clean': 'sum', 'PF_Clean': 'sum'}).reset_index()
     df_s_agg['Total_Stock'] = df_s_agg['ZFS_Clean'] + df_s_agg['PF_Clean']
 
     # 3. Process Profit
     p_sku_col = next((c for c in df_p.columns if 'SKU' in c.upper()), df_p.columns[0])
-    p_profit_col = next((c for c in df_p.columns if 'PROFIT' in c.upper() or 'MARGIN' in c.upper()), df_p.columns[-1])
+    p_profit_col = next((c for c in df_p.columns if any(k in c.upper() for k in ['PROFIT', 'MARGIN', 'CONTRIBUTION'])), df_p.columns[-1])
     df_p['Article_Key'] = df_p[p_sku_col].apply(get_article_key)
     df_p['Profit_Clean'] = clean_numeric(df_p[p_profit_col])
 
@@ -94,7 +105,7 @@ if curr_attalos and z_marketing and stock_file:
         return 'LOW'
 
     df['Tier'] = df.apply(assign_tier, axis=1)
-    df['Campaign_Group'] = df['Gender'].apply(lambda x: 'FEMALE' if any(g in str(x).upper() for g in ['DAM', 'FEMALE', 'WMS']) else 'MALE_UNISEX')
+    df['Campaign_Group'] = df['Gender_Clean'].apply(lambda x: 'FEMALE' if any(g in str(x).upper() for g in ['DAM', 'FEMALE', 'WMS']) else 'MALE_UNISEX')
 
     # --- DASHBOARD DISPLAY ---
     st.header("📊 Weekly Performance Summary")
@@ -117,7 +128,7 @@ if curr_attalos and z_marketing and stock_file:
                 st.markdown(f"**{tier}** ({len(subset)})")
                 sku_list = subset['Article_Key'].unique().tolist()
                 sku_str = ",".join(sku_list)
-                st.text_area("SKUs:", value=sku_str, height=100, key=f"t_{group}_{tier}", label_visibility="collapsed")
+                st.text_area("Copy SKUs:", value=sku_str, height=100, key=f"t_{group}_{tier}", label_visibility="collapsed")
                 csv = pd.DataFrame(sku_list).to_csv(index=False, header=False).encode('utf-8')
                 st.download_button("Export CSV", csv, f"{group}_{tier}.csv", key=f"d_{group}_{tier}")
 
