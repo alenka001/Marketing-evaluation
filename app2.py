@@ -1,146 +1,137 @@
 import streamlit as st
 import pandas as pd
-import io
 
-st.set_page_config(page_title="Zalando Marketing expert", layout="wide")
-st.title("🚀 Swedemount Campaign Optimizer")
+st.set_page_config(page_title="Zalando Campaign specialist", layout="wide")
+st.title("🎯 Zalando Marketing: KPI-Based Tiering")
 
+# --- Helper: Numeric Cleaning ---
 def clean_numeric(series):
     s = series.astype(str).str.strip()
     s = s.str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
     return pd.to_numeric(s, errors='coerce').fillna(0)
 
+# --- Helper: Article Aggregator ---
 def get_article_key(sku):
     sku = str(sku).strip()
-    # Ensure we use the 13-character Article/Config SKU
-    if len(sku) > 13 and '-' in sku:
-        return sku[:13]
-    return sku
+    return sku[:13] if len(sku) > 13 and '-' in sku else sku
 
+# --- Helper: CSV Loader ---
 def load_csv(file):
     if file is None: return None
     raw_data = file.read(20000)
     file.seek(0)
-    try:
-        sample = raw_data.decode('utf-8')
-    except UnicodeDecodeError:
-        sample = raw_data.decode('latin-1')
+    try: sample = raw_data.decode('utf-8')
+    except: sample = raw_data.decode('latin-1')
     sep = ';' if ';' in sample else ','
-    try:
-        file.seek(0)
-        return pd.read_csv(file, sep=sep, encoding='utf-8')
-    except:
-        file.seek(0)
-        return pd.read_csv(file, sep=sep, encoding='latin-1')
+    file.seek(0)
+    return pd.read_csv(file, sep=sep, encoding='utf-8' if 'utf-8' in sample else 'latin-1')
 
-# --- SIDEBAR ---
+# --- SIDEBAR: KPI STEERING ---
 with st.sidebar:
-    st.header("📂 Data Sources")
-    z_marketing = st.file_uploader("1. Swedemount Marketing File (Primary)", type="csv")
+    st.header("📊 Upload Data")
+    z_marketing = st.file_uploader("1. Swedemount Marketing File", type="csv")
     stock_file = st.file_uploader("2. Inventory/Stock File", type="csv")
     curr_attalos = st.file_uploader("3. Attalos Profit File", type="csv")
-    prev_attalos = st.file_uploader("4. Previous Week (Optional)", type="csv")
     
     st.divider()
-    st.header("⚙️ Strategy Thresholds")
-    top_stock = st.number_input("Min Stock for TOP", value=15)
-    top_profit = st.number_input("Min Net Profit (€) for TOP", value=8.0)
+    st.header("🏆 TOP Tier Thresholds")
+    t_stock = st.number_input("Min Stock (TOP)", value=10)
+    t_roas = st.number_input("Min ROAS (TOP)", value=4.0)
+    t_profit = st.number_input("Min Profit € (TOP)", value=10.0)
 
-# --- CORE LOGIC ---
+    st.header("🥈 MEDIUM Tier Thresholds")
+    m_stock = st.number_input("Min Stock (MED)", value=5)
+    m_roas = st.number_input("Min ROAS (MED)", value=2.0)
+    m_profit = st.number_input("Min Profit € (MED)", value=5.0)
+
+# --- PROCESSING ---
 if z_marketing and stock_file and curr_attalos:
     df_m = load_csv(z_marketing)
     df_s = load_csv(stock_file)
     df_p = load_csv(curr_attalos)
-    
-    # 1. PROCESS MARKETING FILE (THE BASE)
-    m_sku_col = 'ConfigSKU' if 'ConfigSKU' in df_m.columns else df_m.columns[6]
-    # Filter out 'undefined' or empty SKUs from marketing
-    df_m = df_m[df_m[m_sku_col].notna() & (df_m[m_sku_col] != 'undefined')]
-    
-    df_m['Article_Key'] = df_m[m_sku_col].apply(get_article_key)
+
+    # 1. Base: Swedemount Marketing
+    m_sku = 'ConfigSKU' if 'ConfigSKU' in df_m.columns else df_m.columns[6]
+    df_m['Article'] = df_m[m_sku].apply(get_article_key)
     df_m['GMV_Val'] = clean_numeric(df_m['GMV'])
     df_m['Spend_Val'] = clean_numeric(df_m['Budgetspent'])
     
-    # Aggregate Marketing to Article Level
-    # We keep 'Gender' from the marketing file here
-    df_m_agg = df_m.groupby(['Article_Key', 'Gender']).agg({
-        'GMV_Val': 'sum', 
-        'Spend_Val': 'sum'
-    }).reset_index()
+    # Aggregating marketing (handling multiple rows per article)
+    df_m_agg = df_m.groupby(['Article', 'Gender']).agg({'GMV_Val':'sum', 'Spend_Val':'sum'}).reset_index()
+    df_m_agg['ROAS_Actual'] = df_m_agg['GMV_Val'] / df_m_agg['Spend_Val'].replace(0, 1)
 
-    # 2. PROCESS STOCK (Summarize to Article)
-    s_sku_col = next((c for c in df_s.columns if 'SKU' in c.upper()), df_s.columns[0])
-    df_s['Article_Key'] = df_s[s_sku_col].apply(get_article_key)
-    df_s['ZFS_Clean'] = clean_numeric(df_s['ZFS_Stock']) if 'ZFS_Stock' in df_s.columns else 0
-    df_s['PF_Clean'] = clean_numeric(df_s['PF_Stock']) if 'PF_Stock' in df_s.columns else 0
+    # 2. Inventory: Summing all sizes
+    s_sku = next((c for c in df_s.columns if 'SKU' in c.upper()), df_s.columns[0])
+    df_s['Article'] = df_s[s_sku].apply(get_article_key)
+    df_s['ZFS'] = clean_numeric(df_s['ZFS_Stock']) if 'ZFS_Stock' in df_s.columns else 0
+    df_s['PF'] = clean_numeric(df_s['PF_Stock']) if 'PF_Stock' in df_s.columns else 0
+    df_s_agg = df_s.groupby('Article').agg({'ZFS':'sum', 'PF':'sum'}).reset_index()
+    df_s_agg['Total_Stock'] = df_s_agg['ZFS'] + df_s_agg['PF']
+
+    # 3. Profit: Attalos Data
+    p_sku = next((c for c in df_p.columns if 'SKU' in c.upper()), df_p.columns[0])
+    p_prof = next((c for c in df_p.columns if any(k in c.upper() for k in ['PROFIT', 'MARGIN'])), df_p.columns[-1])
+    df_p['Article'] = df_p[p_sku].apply(get_article_key)
+    df_p['Profit_Actual'] = clean_numeric(df_p[p_prof])
+
+    # 4. Merge (Left Join on Marketing File)
+    df = pd.merge(df_m_agg, df_s_agg[['Article', 'Total_Stock']], on='Article', how='left')
+    df = pd.merge(df, df_p[['Article', 'Profit_Actual']], on='Article', how='left').fillna(0)
+
+    # 5. KPI Steering Logic
+    def categorize(row):
+        # TOP CHECK
+        if (row['Total_Stock'] >= t_stock and 
+            row['ROAS_Actual'] >= t_roas and 
+            row['Profit_Actual'] >= t_profit):
+            return 'TOP'
+        # MEDIUM CHECK
+        elif (row['Total_Stock'] >= m_stock and 
+              row['ROAS_Actual'] >= m_roas and 
+              row['Profit_Actual'] >= m_profit):
+            return 'MEDIUM'
+        # DEFAULT
+        else:
+            return 'LOW'
+
+    df['Tier'] = df.apply(categorize, axis=1)
+
+    # 6. Unified Gender Grouping
+    def group_gender(val):
+        v = str(val).capitalize()
+        if v == 'Damen': return 'FEMALE'
+        return 'MALE_UNISEX_KIDS' # Herren, Kinder, Unisex merged
+
+    df['Campaign'] = df['Gender'].apply(group_gender)
+
+    # --- OUTPUT ---
+    st.header("🚀 Campaign Tiers")
     
-    df_s_agg = df_s.groupby('Article_Key').agg({
-        'ZFS_Clean': 'sum', 
-        'PF_Clean': 'sum'
-    }).reset_index()
-    df_s_agg['Total_Stock'] = df_s_agg['ZFS_Clean'] + df_s_agg['PF_Clean']
-
-    # 3. PROCESS PROFIT
-    p_sku_col = next((c for c in df_p.columns if 'SKU' in c.upper()), df_p.columns[0])
-    p_profit_col = next((c for c in df_p.columns if any(k in c.upper() for k in ['PROFIT', 'MARGIN'])), df_p.columns[-1])
-    df_p['Article_Key'] = df_p[p_sku_col].apply(get_article_key)
-    df_p['Profit_Clean'] = clean_numeric(df_p[p_profit_col])
-
-    # 4. FINAL MERGE (Driven by Marketing File)
-    df = pd.merge(df_m_agg, df_s_agg, on='Article_Key', how='left')
-    df = pd.merge(df, df_p[['Article_Key', 'Profit_Clean']], on='Article_Key', how='left')
-
-    # 5. NEW ARRIVAL CHECK
-    new_articles = set()
-    if prev_attalos:
-        df_prev = load_csv(prev_attalos)
-        df_prev['Article_Key'] = df_prev[p_sku_col].apply(get_article_key)
-        new_articles = set(df_p['Article_Key']) - set(df_prev['Article_Key'])
-
-    # 6. TIER LOGIC
-    def assign_tier(row):
-        if row['Article_Key'] in new_articles: return 'TEST (NEW)'
-        if row['Total_Stock'] >= top_stock and row['Profit_Clean'] >= top_profit: return 'TOP'
-        if row['Total_Stock'] >= 5 and row['Profit_Clean'] > 0: return 'MEDIUM'
-        return 'LOW'
-
-    df['Tier'] = df.apply(assign_tier, axis=1)
-
-    # 7. GENDER GROUPING (Damen vs Herren/Kinder/Unisex)
-    def map_gender(val):
-        val = str(val).strip().capitalize()
-        if val == 'Damen': return 'FEMALE'
-        return 'MALE_UNISEX'
-    
-    df['Campaign_Group'] = df['Gender'].apply(map_gender)
-
-    # --- DASHBOARD ---
-    st.header("📊 Marketing-Driven Performance")
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Total GMV", f"€{df['GMV_Val'].sum():,.0f}")
-    m2.metric("Total Spend", f"€{df['Spend_Val'].sum():,.0f}")
-    m3.metric("ROAS", f"{(df['GMV_Val'].sum()/df['Spend_Val'].sum()):.2f}" if df['Spend_Val'].sum() > 0 else "0.00")
-    m4.metric("Active Articles", len(df))
+    # Metrics
+    c1, c2, c3 = st.columns(3)
+    c1.metric("TOP Articles", len(df[df['Tier']=='TOP']))
+    c2.metric("MEDIUM Articles", len(df[df['Tier']=='MEDIUM']))
+    c3.metric("LOW Articles", len(df[df['Tier']=='LOW']))
 
     st.divider()
-    
-    # 8. THE 6 CAMPAIGN BUCKETS
-    tiers = ['TOP', 'MEDIUM', 'LOW', 'TEST (NEW)']
-    for group in ['FEMALE', 'MALE_UNISEX']:
-        st.subheader(f"📂 {group} Campaigns")
-        cols = st.columns(4)
-        for i, tier in enumerate(tiers):
+
+    for g in ['FEMALE', 'MALE_UNISEX_KIDS']:
+        st.subheader(f"Campaign Group: {g}")
+        cols = st.columns(3)
+        for i, t in enumerate(['TOP', 'MEDIUM', 'LOW']):
             with cols[i]:
-                subset = df[(df['Campaign_Group'] == group) & (df['Tier'] == tier)]
-                st.markdown(f"**{tier}**")
-                st.metric("Articles", len(subset))
+                subset = df[(df['Campaign'] == g) & (df['Tier'] == t)]
+                sku_list = subset['Article'].unique().tolist()
                 
-                sku_list = subset['Article_Key'].unique().tolist()
-                sku_str = ",".join(sku_list)
-                st.text_area("Copy SKUs:", value=sku_str, height=150, key=f"t_{group}_{tier}", label_visibility="collapsed")
+                st.markdown(f"**{t}** ({len(sku_list)})")
+                st.text_area("SKUs", value=",".join(sku_list), height=150, key=f"{g}_{t}", label_visibility="collapsed")
                 
                 csv = pd.DataFrame(sku_list).to_csv(index=False, header=False).encode('utf-8')
-                st.download_button("Export", csv, f"{group}_{tier}.csv", key=f"d_{group}_{tier}")
+                st.download_button("Export", csv, f"{g}_{t}.csv", key=f"dl_{g}_{t}")
+
+    # --- Debugging Table ---
+    with st.expander("🔍 View Merged Data (Check why items are LOW)"):
+        st.dataframe(df[['Article', 'Gender', 'Total_Stock', 'ROAS_Actual', 'Profit_Actual', 'Tier']])
 
 else:
-    st.info("👋 To start, upload the Swedemount Marketing File, Inventory, and Attalos Profit data.")
+    st.info("👋 Upload all three files to see your campaign distribution.")
