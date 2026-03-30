@@ -119,4 +119,8 @@ if curr_attalos and z_marketing and stock_file:
                 st.text_area("Copy SKUs:", value=sku_str, height=100, key=f"t_{group}_{tier}", label_visibility="collapsed")
                 
                 # Export Button
-                csv = pd.DataFrame(subset['SKU_KEY'].unique()).to_csv(index=False, header=
+                csv = pd.DataFrame(subset['SKU_KEY'].unique()).to_csv(index=False, header=False).encode('utf-8')
+                st.download_button("Export", csv, f"{group}_{tier}.csv", key=f"d_{group}_{tier}")
+
+else:
+    st.info("👋 Upload your files to generate the dashboard. Ensure the Stock file has a Gender column for segmentation.")
