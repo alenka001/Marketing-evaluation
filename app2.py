@@ -4,8 +4,8 @@ import io
 
 # --- Page Setup ---
 st.set_page_config(page_title="Zalando Marketing expert", layout="wide")
-st.title("🚀 Swedemount Expert: Final Campaign Sync")
-st.markdown("### Integrated: Article Sync, Stock Warnings, and Strict Gender Isolation")
+st.title("🚀 Swedemount Expert: Performance & Sync")
+st.markdown("### Integrated: Article Sync, Stock Warnings, and Performance Comparison")
 
 # --- 1. UTILITIES ---
 def clean_numeric(series):
@@ -33,12 +33,16 @@ def load_csv(file):
     file.seek(0)
     return pd.read_csv(file, sep=sep, encoding='utf-8' if 'utf-8' in sample else 'latin-1')
 
-# --- 2. SIDEBAR ---
+# --- 2. SIDEBAR: THE STEERING WHEEL ---
 with st.sidebar:
     st.header("📂 Data Upload")
     z_marketing = st.file_uploader("1. Swedemount SKU Report (ZMS)", type="csv")
     stock_file = st.file_uploader("2. Inventory File", type="csv")
     
+    st.divider()
+    st.header("⚖️ Comparison Mode")
+    do_compare = st.checkbox("Enable Week-over-Week Comparison")
+
     st.divider()
     st.header("🏆 TOP Tier Thresholds")
     t_stock = st.number_input("Min Stock (TOP Article)", value=10)
@@ -56,18 +60,36 @@ if z_marketing and stock_file:
     df_m_raw = load_csv(z_marketing)
     df_s_raw = load_csv(stock_file)
 
-    # A. Clean Marketing Data & Filter for Latest Week
-    df_m = df_m_raw[df_m_raw.iloc[:, 0].astype(str).str.contains('20', na=False)].copy()
-    latest_week = clean_numeric(df_m.iloc[:, 2]).max()
-    df_m_latest = df_m[clean_numeric(df_m.iloc[:, 2]) == latest_week].copy()
+    # A. Global Cleaning & Article ID Generation
+    df_m_raw['Week_Num'] = clean_numeric(df_m_raw.iloc[:, 2])
+    df_m_raw['Article'] = df_m_raw.iloc[:, 6].apply(standardize_sku)
+    df_m_raw['GMV_Val'] = clean_numeric(df_m_raw['GMV'])
+    df_m_raw['Spend_Val'] = clean_numeric(df_m_raw['Budgetspent'])
+    df_m_raw['Sold_Val'] = clean_numeric(df_m_raw['Itemssold'])
+
+    # B. Identify Available Weeks
+    available_weeks = sorted(df_m_raw[df_m_raw['Week_Num'] > 0]['Week_Num'].unique().astype(int))
+    latest_week = max(available_weeks) if available_weeks else 0
     
-    # Generate Article IDs
-    df_m_latest['Article'] = df_m_latest.iloc[:, 6].apply(standardize_sku)
-    df_m_latest['GMV_Val'] = clean_numeric(df_m_latest['GMV'])
-    df_m_latest['Spend_Val'] = clean_numeric(df_m_latest['Budgetspent'])
-    df_m_latest['Sold_Val'] = clean_numeric(df_m_latest['Itemssold'])
+    # C. Week Comparison Logic (Requested Feature)
+    if do_compare and len(available_weeks) >= 2:
+        st.sidebar.subheader("Select Weeks to Compare")
+        w1 = st.sidebar.selectbox("Base Week", available_weeks, index=len(available_weeks)-2)
+        w2 = st.sidebar.selectbox("Comparison Week", available_weeks, index=len(available_weeks)-1)
+        
+        def get_week_agg(w):
+            temp = df_m_raw[df_m_raw['Week_Num'] == w]
+            return temp.groupby('Article').agg({'GMV_Val':'sum', 'Spend_Val':'sum', 'Sold_Val':'sum'}).reset_index()
+
+        df_w1 = get_week_agg(w1)
+        df_w2 = get_week_agg(w2)
+        df_comp = pd.merge(df_w1, df_w2, on='Article', suffixes=(f'_w{w1}', f'_w{w2}'), how='outer').fillna(0)
+        df_comp['GMV_Diff'] = df_comp[f'GMV_Val_w{w2}'] - df_comp[f'GMV_Val_w{w1}']
+
+    # D. Process Latest Week for Dashboard
+    df_m_latest = df_m_raw[df_m_raw['Week_Num'] == latest_week].copy()
     
-    # B. STRICT GENDER ISOLATION RULE
+    # STRICT GENDER ISOLATION RULE
     def detect_group(row):
         g = str(row).lower()
         return 'FEMALE' if 'dam' in g or 'fem' in g else 'MALE_UNISEX_KIDS'
@@ -75,25 +97,20 @@ if z_marketing and stock_file:
     df_m_latest['Group_Draft'] = df_m_latest.iloc[:, 4].apply(detect_group)
     gender_lock = df_m_latest.sort_values('Group_Draft').groupby('Article')['Group_Draft'].first().reset_index()
 
-    # C. Aggregate Marketing Metrics
-    df_m_agg = df_m_latest.groupby('Article').agg({
-        'GMV_Val': 'sum', 
-        'Spend_Val': 'sum', 
-        'Sold_Val': 'sum'
-    }).reset_index()
+    # Aggregate Marketing Metrics
+    df_m_agg = df_m_latest.groupby('Article').agg({'GMV_Val':'sum', 'Spend_Val':'sum', 'Sold_Val':'sum'}).reset_index()
     df_m_agg['ROAS_Actual'] = df_m_agg['GMV_Val'] / df_m_agg['Spend_Val'].replace(0, 1)
     df_m_agg = pd.merge(df_m_agg, gender_lock, on='Article', how='left')
 
-    # D. Clean & Pivot Inventory Data
+    # Inventory Pivot
     df_s_raw['Article'] = df_s_raw.iloc[:, 4].apply(standardize_sku)
     stock_cols = [c for c in df_s_raw.columns if 'STOCK' in c.upper()]
-    for col in stock_cols:
-        df_s_raw[col] = clean_numeric(df_s_raw[col])
+    for col in stock_cols: df_s_raw[col] = clean_numeric(df_s_raw[col])
     
     df_s_pivot = df_s_raw.groupby('Article')[stock_cols].sum().reset_index()
     df_s_pivot['Total_Stock'] = df_s_pivot[stock_cols].sum(axis=1)
 
-    # E. Merge & Tiering Logic
+    # Merge & Tiering
     df = pd.merge(df_m_agg, df_s_pivot[['Article', 'Total_Stock']], on='Article', how='left').fillna(0)
     df['Daily_Velocity'] = df['Sold_Val'] / 7
     df['Days_Left'] = df['Total_Stock'] / df['Daily_Velocity'].replace(0, 0.001)
@@ -105,49 +122,67 @@ if z_marketing and stock_file:
 
     df['Tier'] = df.apply(assign_tier, axis=1)
 
-    # --- 4. NEW LOGIC: DUPLICATES & MISSING ---
-    
-    # 1. Multi-Campaign Flagging (Article in > 1 campaign this week)
-    # Filter out 'UNDEFINED' articles first
+    # --- 4. EXPORT LOGIC: DUPLICATES & MISSING ---
+    # 1. Duplicates (Latest Week Only)
     m_valid = df_m_latest[df_m_latest['Article'] != 'UNDEFINED']
-    campaign_counts = m_valid.groupby('Article')['ZMSCampaign'].nunique()
-    multi_camp_skus = campaign_counts[campaign_counts > 1].index.tolist()
-    df_duplicates = m_valid[m_valid['Article'].isin(multi_camp_skus)].sort_values('Article')
+    dupe_counts = m_valid.groupby('Article')['ZMSCampaign'].nunique()
+    multi_skus = dupe_counts[dupe_counts > 1].index.tolist()
+    df_dupes_out = m_valid[m_valid['Article'].isin(multi_skus)][['Article', 'ZMSCampaign', 'GMV_Val', 'Spend_Val']].sort_values('Article')
 
-    # 2. Missing SKUs (In Inventory but NOT in any Campaign)
-    all_inventory_skus = set(df_s_pivot[df_s_pivot['Article'] != 'UNDEFINED']['Article'])
-    all_marketing_skus = set(df_m_agg[df_m_agg['Article'] != 'UNDEFINED']['Article'])
-    missing_from_marketing = list(all_inventory_skus - all_marketing_skus)
-    df_missing = df_s_pivot[df_s_pivot['Article'].isin(missing_from_marketing)]
+    # 2. Missing (In Inventory but NOT in Marketing)
+    inv_skus = set(df_s_pivot[df_s_pivot['Article'] != 'UNDEFINED']['Article'])
+    zms_skus = set(df_m_agg[df_m_agg['Article'] != 'UNDEFINED']['Article'])
+    missing_skus = list(inv_skus - zms_skus)
+    df_missing_out = df_s_pivot[df_s_pivot['Article'].isin(missing_skus)][['Article', 'Total_Stock']]
 
     # --- 5. DASHBOARD OUTPUT ---
-    st.header("📊 Final Campaign Distribution")
     
+    # A. Comparison Section
+    if do_compare and len(available_weeks) >= 2:
+        st.header(f"📈 Performance Jämförelse: Vecka {w1} vs {w2}")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total GMV Change", f"{df_comp['GMV_Diff'].sum():,.0f} SEK")
+        c2.metric("New Articles", len(df_comp[df_comp[f'GMV_Val_w{w1}'] == 0]))
+        c3.metric("Dropped Articles", len(df_comp[df_comp[f'GMV_Val_w{w2}'] == 0]))
+        with st.expander("Visa fullständig jämförelsetabell"):
+            st.dataframe(df_comp, use_container_width=True)
+        st.divider()
+
+    # B. Main Metrics
+    st.header(f"📊 Final Campaign Distribution (Week {latest_week})")
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Unique Articles", len(df))
     m2.metric("Overall ROAS", f"{(df['GMV_Val'].sum()/df['Spend_Val'].sum()):.2f}" if df['Spend_Val'].sum() > 0 else "0.0")
-    m3.metric("Multi-Campaign Flags", len(multi_camp_skus))
-    m4.metric("Missing from ZMS", len(missing_from_marketing))
+    m3.metric("Stock Alerts", len(df[(df['Tier'] == 'TOP') & (df['Days_Left'] < days_threshold) & (df['Sold_Val'] > 0)]))
+    m4.metric("Matched Inventory", f"{df['Total_Stock'].sum():,.0f} units")
 
-    # ALERT SECTIONS
-    col_a, col_b = st.columns(2)
+    # C. Stock Warning Alert
+    warnings = df[(df['Tier'] == 'TOP') & (df['Days_Left'] < days_threshold) & (df['Sold_Val'] > 0)]
+    if not warnings.empty:
+        st.error(f"🔥 STOCK ALERT: {len(warnings)} TOP Articles running out fast!")
+        st.dataframe(warnings[['Article', 'Group_Draft', 'Total_Stock', 'Sold_Val', 'Days_Left']], use_container_width=True)
+
+    # D. Sync & Download Section
+    st.divider()
+    st.subheader("🔄 Sync Status & Clean-up")
+    col_d, col_m = st.columns(2)
+    with col_d:
+        st.markdown("**Multi-Campaign Duplicates**")
+        if not df_dupes_out.empty:
+            st.dataframe(df_dupes_out, height=200, use_container_width=True)
+            st.download_button("📥 Download Duplicates CSV", df_dupes_out.to_csv(index=False).encode('utf-8'), "multi_campaign_skus.csv")
+        else: st.success("No duplicates found!")
     
-    with col_a:
-        if not df_duplicates.empty:
-            st.warning(f"⚠️ {len(multi_camp_skus)} Articles are in MULTIPLE campaigns")
-            with st.expander("View Duplicate Assignments"):
-                st.dataframe(df_duplicates[['Article', 'ZMSCampaign', 'GMV_Val', 'Spend_Val']], use_container_width=True)
-    
-    with col_b:
-        if missing_from_marketing:
-            st.info(f"🔍 {len(missing_from_marketing)} Articles in Stock but NOT in ZMS")
-            with st.expander("View Missing SKUs List"):
-                st.write(", ".join(missing_from_marketing))
-                st.dataframe(df_missing[['Article', 'Total_Stock']], use_container_width=True)
+    with col_m:
+        st.markdown("**Missing from ZMS (In Stock)**")
+        if not df_missing_out.empty:
+            st.dataframe(df_missing_out, height=200, use_container_width=True)
+            st.download_button("📥 Download Missing SKUs CSV", df_missing_out.to_csv(index=False).encode('utf-8'), "missing_from_zms.csv")
+        else: st.success("All stock is live in ZMS!")
 
     st.divider()
 
-    # THE 6 EXPORT BUCKETS (Existing logic)
+    # E. The 6 Export Buckets
     for group in ['FEMALE', 'MALE_UNISEX_KIDS']:
         st.subheader(f"📂 {group} Campaign Tiers")
         cols = st.columns(3)
@@ -161,7 +196,7 @@ if z_marketing and stock_file:
                 csv = pd.DataFrame(skus).to_csv(index=False, header=False).encode('utf-8')
                 st.download_button("Export CSV", csv, f"{group}_{tier}.csv", key=f"d_{group}_{tier}")
 
-    # --- 6. LOGIC INSPECTOR ---
+    # F. Logic Inspector
     st.divider()
     with st.expander("🔍 Deep Dive Diagnostic"):
         st.dataframe(df[['Article', 'Group_Draft', 'Tier', 'Total_Stock', 'Days_Left', 'ROAS_Actual']], use_container_width=True)
