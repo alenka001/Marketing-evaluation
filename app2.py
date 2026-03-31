@@ -101,24 +101,32 @@ if z_marketing and stock_file:
     df_m_agg['ROAS_Actual'] = df_m_agg['GMV_Val'] / df_m_agg['Spend_Val'].replace(0, 1)
     df_m_agg = pd.merge(df_m_agg, gender_lock, on='Article', how='left')
 
-    # D. Inventory Processing (With Season & 0-stock Exclusion)
+    # D. Inventory Processing (With Season, Variant & Exclusion Rules)
     df_s_raw['Article'] = df_s_raw.iloc[:, 4].apply(standardize_sku)
     df_s_raw['Season'] = df_s_raw.iloc[:, 8].astype(str).str.strip() # Kolumn I
+    df_s_raw['Partner_Article_Variant'] = df_s_raw.iloc[:, 2].astype(str).str.strip() # Kolumn C
     
     stock_cols = [c for c in df_s_raw.columns if 'STOCK' in c.upper()]
     for col in stock_cols: 
         df_s_raw[col] = clean_numeric(df_s_raw[col])
     
-    # Aggregera lager och inkludera säsong (vi tar första säsongen som matchar artikeln)
+    # Aggregera lager och inkludera säsong & variant
     df_s_pivot = df_s_raw.groupby('Article').agg({
         **{col: 'sum' for col in stock_cols},
-        'Season': 'first'
+        'Season': 'first',
+        'Partner_Article_Variant': 'first'
     }).reset_index()
     
     df_s_pivot['Total_Stock'] = df_s_pivot[stock_cols].sum(axis=1)
     
-    # EXKLUDERA ARTIKLAR MED 0 I LAGER
-    df_s_pivot = df_s_pivot[df_s_pivot['Total_Stock'] > 0].copy()
+    # REGEL 1: Exkludera artiklar med 0 i lager
+    # REGEL 2: Måste ha ett Partner_Article_Variant nummer (inte tomt eller 'nan')
+    df_s_pivot = df_s_pivot[
+        (df_s_pivot['Total_Stock'] > 0) & 
+        (df_s_pivot['Partner_Article_Variant'].notna()) & 
+        (df_s_pivot['Partner_Article_Variant'] != 'nan') & 
+        (df_s_pivot['Partner_Article_Variant'] != '')
+    ].copy()
 
     # E. Merge & Tiering
     df = pd.merge(df_m_agg, df_s_pivot[['Article', 'Total_Stock', 'Season']], on='Article', how='left').fillna(0)
@@ -139,11 +147,11 @@ if z_marketing and stock_file:
     multi_skus = dupe_counts[dupe_counts > 1].index.tolist()
     df_dupes_out = m_valid[m_valid['Article'].isin(multi_skus)][['Article', 'ZMSCampaign', 'GMV_Val', 'Spend_Val']].sort_values('Article')
 
-    # 2. Missing (Only items with stock > 0, thanks to step 3D)
+    # 2. Missing (Only items meeting all rules from step 3D)
     inv_skus = set(df_s_pivot[df_s_pivot['Article'] != 'UNDEFINED']['Article'])
     zms_skus = set(df_m_agg[df_m_agg['Article'] != 'UNDEFINED']['Article'])
     missing_skus_list = list(inv_skus - zms_skus)
-    df_missing_raw = df_s_pivot[df_s_pivot['Article'].isin(missing_skus_list)][['Article', 'Total_Stock', 'Season']]
+    df_missing_raw = df_s_pivot[df_s_pivot['Article'].isin(missing_skus_list)][['Article', 'Total_Stock', 'Season', 'Partner_Article_Variant']]
 
     # --- 5. DASHBOARD OUTPUT ---
     if do_compare and len(available_weeks) >= 2:
@@ -173,7 +181,7 @@ if z_marketing and stock_file:
     
     with col_m:
         st.markdown("**Missing from ZMS (In Stock)**")
-        # --- NYTT: SÄSONGSFILTER FÖR MISSING SKUS ---
+        # Säsongsfilter
         all_seasons = sorted(df_missing_raw['Season'].unique())
         selected_seasons = st.multiselect("Filter by Season", options=all_seasons, default=all_seasons)
         
@@ -183,7 +191,6 @@ if z_marketing and stock_file:
         st.download_button("📥 Download Missing SKUs CSV", df_missing_filtered.to_csv(index=False).encode('utf-8'), "missing_from_zms.csv")
 
     st.divider()
-    # (Resten av koden för de 6 export-boxarna förblir densamma)
     for group in ['FEMALE', 'MALE_UNISEX_KIDS']:
         st.subheader(f"📂 {group} Campaign Tiers")
         cols = st.columns(3)
