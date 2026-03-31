@@ -7,10 +7,22 @@ st.set_page_config(page_title="Zalando Marketing expert", layout="wide")
 st.title("🚀 Swedemount Expert: Performance & Sync")
 st.markdown("### Integrated: Article Sync, Stock Warnings, and Performance Comparison")
 
-# --- 1. UTILITIES ---
+# --- 1. UTILITIES (Uppdaterad med fix för 0-felet) ---
 def clean_numeric(series):
-    """Handles European formatting: 1.454,95 -> 1454.95"""
-    s = series.astype(str).str.strip().str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+    """
+    Smartare hantering av tal:
+    - Om talet har ett komma (t.ex. 1.454,95), tas punkten bort och kommat blir punkt.
+    - Om talet bara har en punkt (t.ex. 652.0), behålls punkten som decimalavgränsare.
+    """
+    def fix_string(val):
+        val = str(val).strip()
+        if ',' in val:
+            # Europeiskt format: 1.000,00 -> 1000.00
+            val = val.replace('.', '').replace(',', '.')
+        # Om det bara är en punkt (t.ex. 652.0), gör vi ingenting, pd.to_numeric sköter det.
+        return val
+
+    s = series.apply(fix_string)
     return pd.to_numeric(s, errors='coerce').fillna(0)
 
 def standardize_sku(sku):
@@ -33,7 +45,7 @@ def load_csv(file):
     file.seek(0)
     return pd.read_csv(file, sep=sep, encoding='utf-8' if 'utf-8' in sample else 'latin-1')
 
-# --- 2. SIDEBAR: THE STEERING WHEEL ---
+# --- 2. SIDEBAR ---
 with st.sidebar:
     st.header("📂 Data Upload")
     z_marketing = st.file_uploader("1. Swedemount SKU Report (ZMS)", type="csv")
@@ -60,7 +72,7 @@ if z_marketing and stock_file:
     df_m_raw = load_csv(z_marketing)
     df_s_raw = load_csv(stock_file)
 
-    # A. Global Cleaning & Article ID Generation
+    # A. Global Cleaning
     df_m_raw['Week_Num'] = clean_numeric(df_m_raw.iloc[:, 2])
     df_m_raw['Article'] = df_m_raw.iloc[:, 6].apply(standardize_sku)
     df_m_raw['GMV_Val'] = clean_numeric(df_m_raw['GMV'])
@@ -71,7 +83,7 @@ if z_marketing and stock_file:
     available_weeks = sorted(df_m_raw[df_m_raw['Week_Num'] > 0]['Week_Num'].unique().astype(int))
     latest_week = max(available_weeks) if available_weeks else 0
     
-    # C. Week Comparison Logic (Requested Feature)
+    # C. Week Comparison Logic
     if do_compare and len(available_weeks) >= 2:
         st.sidebar.subheader("Select Weeks to Compare")
         w1 = st.sidebar.selectbox("Base Week", available_weeks, index=len(available_weeks)-2)
@@ -86,10 +98,9 @@ if z_marketing and stock_file:
         df_comp = pd.merge(df_w1, df_w2, on='Article', suffixes=(f'_w{w1}', f'_w{w2}'), how='outer').fillna(0)
         df_comp['GMV_Diff'] = df_comp[f'GMV_Val_w{w2}'] - df_comp[f'GMV_Val_w{w1}']
 
-    # D. Process Latest Week for Dashboard
+    # D. Process Latest Week
     df_m_latest = df_m_raw[df_m_raw['Week_Num'] == latest_week].copy()
     
-    # STRICT GENDER ISOLATION RULE
     def detect_group(row):
         g = str(row).lower()
         return 'FEMALE' if 'dam' in g or 'fem' in g else 'MALE_UNISEX_KIDS'
@@ -97,7 +108,6 @@ if z_marketing and stock_file:
     df_m_latest['Group_Draft'] = df_m_latest.iloc[:, 4].apply(detect_group)
     gender_lock = df_m_latest.sort_values('Group_Draft').groupby('Article')['Group_Draft'].first().reset_index()
 
-    # Aggregate Marketing Metrics
     df_m_agg = df_m_latest.groupby('Article').agg({'GMV_Val':'sum', 'Spend_Val':'sum', 'Sold_Val':'sum'}).reset_index()
     df_m_agg['ROAS_Actual'] = df_m_agg['GMV_Val'] / df_m_agg['Spend_Val'].replace(0, 1)
     df_m_agg = pd.merge(df_m_agg, gender_lock, on='Article', how='left')
@@ -105,7 +115,8 @@ if z_marketing and stock_file:
     # Inventory Pivot
     df_s_raw['Article'] = df_s_raw.iloc[:, 4].apply(standardize_sku)
     stock_cols = [c for c in df_s_raw.columns if 'STOCK' in c.upper()]
-    for col in stock_cols: df_s_raw[col] = clean_numeric(df_s_raw[col])
+    for col in stock_cols: 
+        df_s_raw[col] = clean_numeric(df_s_raw[col]) # Här används den nya säkra tvätten
     
     df_s_pivot = df_s_raw.groupby('Article')[stock_cols].sum().reset_index()
     df_s_pivot['Total_Stock'] = df_s_pivot[stock_cols].sum(axis=1)
@@ -122,22 +133,18 @@ if z_marketing and stock_file:
 
     df['Tier'] = df.apply(assign_tier, axis=1)
 
-    # --- 4. EXPORT LOGIC: DUPLICATES & MISSING ---
-    # 1. Duplicates (Latest Week Only)
+    # --- 4. EXPORT LOGIC ---
     m_valid = df_m_latest[df_m_latest['Article'] != 'UNDEFINED']
     dupe_counts = m_valid.groupby('Article')['ZMSCampaign'].nunique()
     multi_skus = dupe_counts[dupe_counts > 1].index.tolist()
     df_dupes_out = m_valid[m_valid['Article'].isin(multi_skus)][['Article', 'ZMSCampaign', 'GMV_Val', 'Spend_Val']].sort_values('Article')
 
-    # 2. Missing (In Inventory but NOT in Marketing)
     inv_skus = set(df_s_pivot[df_s_pivot['Article'] != 'UNDEFINED']['Article'])
     zms_skus = set(df_m_agg[df_m_agg['Article'] != 'UNDEFINED']['Article'])
     missing_skus = list(inv_skus - zms_skus)
     df_missing_out = df_s_pivot[df_s_pivot['Article'].isin(missing_skus)][['Article', 'Total_Stock']]
 
     # --- 5. DASHBOARD OUTPUT ---
-    
-    # A. Comparison Section
     if do_compare and len(available_weeks) >= 2:
         st.header(f"📈 Performance Jämförelse: Vecka {w1} vs {w2}")
         c1, c2, c3 = st.columns(3)
@@ -148,21 +155,19 @@ if z_marketing and stock_file:
             st.dataframe(df_comp, use_container_width=True)
         st.divider()
 
-    # B. Main Metrics
     st.header(f"📊 Final Campaign Distribution (Week {latest_week})")
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Unique Articles", len(df))
     m2.metric("Overall ROAS", f"{(df['GMV_Val'].sum()/df['Spend_Val'].sum()):.2f}" if df['Spend_Val'].sum() > 0 else "0.0")
     m3.metric("Stock Alerts", len(df[(df['Tier'] == 'TOP') & (df['Days_Left'] < days_threshold) & (df['Sold_Val'] > 0)]))
+    # Nu visas korrekta saldon här:
     m4.metric("Matched Inventory", f"{df['Total_Stock'].sum():,.0f} units")
 
-    # C. Stock Warning Alert
     warnings = df[(df['Tier'] == 'TOP') & (df['Days_Left'] < days_threshold) & (df['Sold_Val'] > 0)]
     if not warnings.empty:
         st.error(f"🔥 STOCK ALERT: {len(warnings)} TOP Articles running out fast!")
         st.dataframe(warnings[['Article', 'Group_Draft', 'Total_Stock', 'Sold_Val', 'Days_Left']], use_container_width=True)
 
-    # D. Sync & Download Section
     st.divider()
     st.subheader("🔄 Sync Status & Clean-up")
     col_d, col_m = st.columns(2)
@@ -171,18 +176,14 @@ if z_marketing and stock_file:
         if not df_dupes_out.empty:
             st.dataframe(df_dupes_out, height=200, use_container_width=True)
             st.download_button("📥 Download Duplicates CSV", df_dupes_out.to_csv(index=False).encode('utf-8'), "multi_campaign_skus.csv")
-        else: st.success("No duplicates found!")
     
     with col_m:
         st.markdown("**Missing from ZMS (In Stock)**")
         if not df_missing_out.empty:
             st.dataframe(df_missing_out, height=200, use_container_width=True)
             st.download_button("📥 Download Missing SKUs CSV", df_missing_out.to_csv(index=False).encode('utf-8'), "missing_from_zms.csv")
-        else: st.success("All stock is live in ZMS!")
 
     st.divider()
-
-    # E. The 6 Export Buckets
     for group in ['FEMALE', 'MALE_UNISEX_KIDS']:
         st.subheader(f"📂 {group} Campaign Tiers")
         cols = st.columns(3)
@@ -193,13 +194,7 @@ if z_marketing and stock_file:
                 st.markdown(f"**{tier} {group}**")
                 st.metric("Articles", len(skus))
                 st.text_area("SKU List", ",".join(skus), height=150, key=f"t_{group}_{tier}", label_visibility="collapsed")
-                csv = pd.DataFrame(skus).to_csv(index=False, header=False).encode('utf-8')
-                st.download_button("Export CSV", csv, f"{group}_{tier}.csv", key=f"d_{group}_{tier}")
-
-    # F. Logic Inspector
-    st.divider()
-    with st.expander("🔍 Deep Dive Diagnostic"):
-        st.dataframe(df[['Article', 'Group_Draft', 'Tier', 'Total_Stock', 'Days_Left', 'ROAS_Actual']], use_container_width=True)
+                st.download_button("Export CSV", pd.DataFrame(skus).to_csv(index=False, header=False).encode('utf-8'), f"{group}_{tier}.csv", key=f"d_{group}_{tier}")
 
 else:
     st.info("👋 Everything is ready. Just upload your Marketing and Inventory files to begin.")
