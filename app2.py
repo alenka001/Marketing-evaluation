@@ -1,19 +1,26 @@
 import streamlit as st
 import pandas as pd
 import io
+import re
 
 # --- Page Setup ---
 st.set_page_config(page_title="Zalando Marketing expert", layout="wide")
-st.title("🚀 Swedemount Expert: Performance & Sync")
+st.title("Swedemount Expert: Performance & Sync")
 st.markdown("### Integrated: Article Sync, Stock Warnings, and Season Filtering")
 
 # --- 1. UTILITIES ---
 def clean_numeric(series):
     def fix_string(val):
+        if pd.isna(val): return "0"
         val = str(val).strip()
-        if ',' in val:
+        # Ta bort valutasymboler (€, SEK) och mellanslag
+        val = re.sub(r'[^\d,.-]', '', val)
+        if ',' in val and '.' in val: # Hantera format som 1.454,95
             val = val.replace('.', '').replace(',', '.')
+        elif ',' in val: # Hantera format som 1454,95
+            val = val.replace(',', '.')
         return val
+    
     s = series.apply(fix_string)
     return pd.to_numeric(s, errors='coerce').fillna(0)
 
@@ -22,7 +29,6 @@ def standardize_sku(sku):
     if '-' in s:
         parts = s.split('-')
         if len(parts) >= 2:
-            # Vi behåller bas-SKU:n (t.ex. 00E21A00Q-Q11)
             return f"{parts[0]}-{parts[1][:3]}"
     return s
 
@@ -63,13 +69,22 @@ if z_marketing and stock_file:
     df_m_raw = load_csv(z_marketing)
     df_s_raw = load_csv(stock_file)
 
-    # A. Marketing Data Processing
-    # Kolumn 2=Week, 6=ConfigSKU, 7=Budgetspent, 15=Itemssold, 16=GMV
-    df_m_raw['Week_Num'] = clean_numeric(df_m_raw.iloc[:, 2])
-    df_m_raw['Article'] = df_m_raw.iloc[:, 6].apply(standardize_sku)
-    df_m_raw['GMV_Val'] = clean_numeric(df_m_raw['GMV'])
-    df_m_raw['Spend_Val'] = clean_numeric(df_m_raw['Budgetspent'])
-    df_m_raw['Sold_Val'] = clean_numeric(df_m_raw['Itemssold'])
+    # A. Marketing Data Processing (Mapping med flexibla namn)
+    # Vi mappar de nya namnen med mellanslag
+    m_cols = {
+        'Week': [c for c in df_m_raw.columns if 'Week' in c][0],
+        'SKU': [c for c in df_m_raw.columns if 'SKU' in c][0],
+        'GMV': [c for c in df_m_raw.columns if 'GMV' in c][0],
+        'Spend': [c for c in df_m_raw.columns if 'Budget spent' in c or 'Budgetspent' in c][0],
+        'Sold': [c for c in df_m_raw.columns if 'Items sold' in c or 'Itemssold' in c][0],
+        'Campaign': [c for c in df_m_raw.columns if 'Campaign' in c][0]
+    }
+
+    df_m_raw['Week_Num'] = clean_numeric(df_m_raw[m_cols['Week']])
+    df_m_raw['Article'] = df_m_raw[m_cols['SKU']].apply(standardize_sku)
+    df_m_raw['GMV_Val'] = clean_numeric(df_m_raw[m_cols['GMV']])
+    df_m_raw['Spend_Val'] = clean_numeric(df_m_raw[m_cols['Spend']])
+    df_m_raw['Sold_Val'] = clean_numeric(df_m_raw[m_cols['Sold']])
 
     available_weeks = sorted(df_m_raw[df_m_raw['Week_Num'] > 0]['Week_Num'].unique().astype(int))
     latest_week = max(available_weeks) if available_weeks else 0
@@ -81,7 +96,9 @@ if z_marketing and stock_file:
         g = str(row).lower()
         return 'FEMALE' if 'dam' in g or 'fem' in g else 'MALE_UNISEX_KIDS'
     
-    df_m_latest['Group_Draft'] = df_m_latest.iloc[:, 4].apply(detect_group)
+    # Försök hitta Gender-kolumnen
+    gender_col = [c for c in df_m_raw.columns if 'Gender' in c][0]
+    df_m_latest['Group_Draft'] = df_m_latest[gender_col].apply(detect_group)
     gender_lock = df_m_latest.sort_values('Group_Draft').groupby('Article')['Group_Draft'].first().reset_index()
 
     df_m_agg = df_m_latest.groupby('Article').agg({'GMV_Val':'sum', 'Spend_Val':'sum', 'Sold_Val':'sum'}).reset_index()
@@ -91,7 +108,7 @@ if z_marketing and stock_file:
     # D. Inventory Processing
     df_s_raw['Article'] = df_s_raw.iloc[:, 4].apply(standardize_sku)
     df_s_raw['Season'] = df_s_raw.iloc[:, 8].astype(str).str.strip() 
-    df_s_raw['brand'] = df_s_raw.iloc[:, 7].astype(str).str.strip() # Kolumn H
+    df_s_raw['brand'] = df_s_raw.iloc[:, 7].astype(str).str.strip()
     df_s_raw['Partner_Article_Variant'] = df_s_raw.iloc[:, 2].astype(str).str.strip() 
     
     stock_cols = [c for c in df_s_raw.columns if 'STOCK' in c.upper()]
@@ -107,12 +124,10 @@ if z_marketing and stock_file:
     
     df_s_pivot['Total_Stock'] = df_s_pivot[stock_cols].sum(axis=1)
     
-    # REGEL-filtrering för lager-vyer
     df_s_valid = df_s_pivot[
         (df_s_pivot['Total_Stock'] > 0) & 
         (df_s_pivot['Partner_Article_Variant'].notna()) & 
-        (df_s_pivot['Partner_Article_Variant'] != 'nan') & 
-        (df_s_pivot['Partner_Article_Variant'] != '')
+        (df_s_pivot['Partner_Article_Variant'] != 'nan')
     ].copy()
 
     # E. Merge & Tiering
@@ -131,7 +146,6 @@ if z_marketing and stock_file:
     tab1, tab2 = st.tabs(["🚀 Kampanjfördelning", "🏷️ Varumärkesöversikt"])
 
     with tab1:
-        # --- ORIGINAL DASHBOARD LOGIC ---
         if do_compare and len(available_weeks) >= 2:
             st.sidebar.subheader("Select Weeks to Compare")
             w1 = st.sidebar.selectbox("Base Week", available_weeks, index=len(available_weeks)-2)
@@ -148,7 +162,7 @@ if z_marketing and stock_file:
 
             st.header(f"📈 Performance Jämförelse: Vecka {w1} vs {w2}")
             c1, c2, c3 = st.columns(3)
-            c1.metric("Total GMV Change", f"{df_comp['GMV_Diff'].sum():,.0f} SEK")
+            c1.metric("Total GMV Change", f"{df_comp['GMV_Diff'].sum():,.0f}")
             c2.metric("New Articles", len(df_comp[df_comp[f'GMV_Val_w{w1}'] == 0]))
             c3.metric("Dropped Articles", len(df_comp[df_comp[f'GMV_Val_w{w2}'] == 0]))
             st.divider()
@@ -167,9 +181,9 @@ if z_marketing and stock_file:
         with col_d:
             st.markdown("**Multi-Campaign Duplicates**")
             m_valid_skus = df_m_latest[df_m_latest['Article'] != 'UNDEFINED']
-            dupe_counts = m_valid_skus.groupby('Article')['ZMSCampaign'].nunique()
+            dupe_counts = m_valid_skus.groupby('Article')[m_cols['Campaign']].nunique()
             multi_skus = dupe_counts[dupe_counts > 1].index.tolist()
-            df_dupes_out = m_valid_skus[m_valid_skus['Article'].isin(multi_skus)][['Article', 'ZMSCampaign', 'GMV_Val', 'Spend_Val']].sort_values('Article')
+            df_dupes_out = m_valid_skus[m_valid_skus['Article'].isin(multi_skus)][['Article', m_cols['Campaign'], 'GMV_Val', 'Spend_Val']].sort_values('Article')
             if not df_dupes_out.empty:
                 st.dataframe(df_dupes_out, height=250, use_container_width=True)
                 st.download_button("📥 Download Duplicates CSV", df_dupes_out.to_csv(index=False).encode('utf-8'), "multi_campaign_skus.csv")
@@ -202,29 +216,11 @@ if z_marketing and stock_file:
 
     with tab2:
         st.header("🏷️ Brand Performance Overview")
-        st.markdown("Baserat på all marknadsföringsdata i rapporten.")
-
-        # Aggregera all data per artikel (inte bara senaste veckan för en total överblick)
-        # Men vi använder mappen från inventory-filen
         brand_map = df_s_pivot[['Article', 'brand']].drop_duplicates('Article')
-        
-        # Aggregera total marknadsföring
-        df_m_total = df_m_raw.groupby('Article').agg({
-            'Spend_Val': 'sum',
-            'GMV_Val': 'sum',
-            'Sold_Val': 'sum'
-        }).reset_index()
-
+        df_m_total = df_m_raw.groupby('Article').agg({'Spend_Val': 'sum', 'GMV_Val': 'sum', 'Sold_Val': 'sum'}).reset_index()
         df_brand = pd.merge(df_m_total, brand_map, on='Article', how='left').fillna({'brand': 'Unknown'})
         
-        # Gruppera per varumärke
-        brand_stats = df_brand.groupby('brand').agg({
-            'Spend_Val': 'sum',
-            'GMV_Val': 'sum',
-            'Sold_Val': 'sum'
-        }).reset_index()
-
-        # Beräkna Shares och KPI:er
+        brand_stats = df_brand.groupby('brand').agg({'Spend_Val': 'sum', 'GMV_Val': 'sum', 'Sold_Val': 'sum'}).reset_index()
         total_budget = brand_stats['Spend_Val'].sum()
         total_gmv = brand_stats['GMV_Val'].sum()
 
@@ -233,25 +229,16 @@ if z_marketing and stock_file:
         brand_stats['ROAS'] = (brand_stats['GMV_Val'] / brand_stats['Spend_Val'].replace(0, 1)).round(2)
         brand_stats['COS (%)'] = (brand_stats['Spend_Val'] / brand_stats['GMV_Val'].replace(0, 1) * 100).round(1)
 
-        # Snygga till kolumnnamn för visning
-        brand_stats_display = brand_stats.rename(columns={
-            'brand': 'Brand',
-            'Spend_Val': 'Total Budget (SEK)',
-            'GMV_Val': 'Total GMV (SEK)',
-            'Sold_Val': 'Items Sold'
-        }).sort_values('Total GMV (SEK)', ascending=False)
+        brand_stats_display = brand_stats.rename(columns={'brand': 'Brand', 'Spend_Val': 'Total Budget', 'GMV_Val': 'Total GMV', 'Sold_Val': 'Items Sold'}).sort_values('Total GMV', ascending=False)
 
-        # Visa Metrics
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Total Budget", f"{total_budget:,.0f} SEK")
-        c2.metric("Total GMV", f"{total_gmv:,.0f} SEK")
+        c1.metric("Total Budget", f"{total_budget:,.0f}")
+        c2.metric("Total GMV", f"{total_gmv:,.0f}")
         c3.metric("Avg ROAS", f"{(total_gmv/total_budget if total_budget > 0 else 0):.2f}")
         c4.metric("Avg COS", f"{(total_budget/total_gmv*100 if total_gmv > 0 else 0):.1f}%")
 
         st.divider()
         st.dataframe(brand_stats_display, use_container_width=True, hide_index=True)
-        
-        # Möjlighet att ladda ner varumärkesrapporten
         st.download_button("📥 Exportera Varumärkesrapport", brand_stats_display.to_csv(index=False).encode('utf-8'), "brand_performance.csv")
 
 else:
