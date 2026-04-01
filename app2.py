@@ -22,6 +22,7 @@ def standardize_sku(sku):
     if '-' in s:
         parts = s.split('-')
         if len(parts) >= 2:
+            # Vi behåller bas-SKU:n (t.ex. 00E21A00Q-Q11)
             return f"{parts[0]}-{parts[1][:3]}"
     return s
 
@@ -63,6 +64,7 @@ if z_marketing and stock_file:
     df_s_raw = load_csv(stock_file)
 
     # A. Marketing Data Processing
+    # Kolumn 2=Week, 6=ConfigSKU, 7=Budgetspent, 15=Itemssold, 16=GMV
     df_m_raw['Week_Num'] = clean_numeric(df_m_raw.iloc[:, 2])
     df_m_raw['Article'] = df_m_raw.iloc[:, 6].apply(standardize_sku)
     df_m_raw['GMV_Val'] = clean_numeric(df_m_raw['GMV'])
@@ -72,22 +74,7 @@ if z_marketing and stock_file:
     available_weeks = sorted(df_m_raw[df_m_raw['Week_Num'] > 0]['Week_Num'].unique().astype(int))
     latest_week = max(available_weeks) if available_weeks else 0
     
-    # B. Week Comparison
-    if do_compare and len(available_weeks) >= 2:
-        st.sidebar.subheader("Select Weeks to Compare")
-        w1 = st.sidebar.selectbox("Base Week", available_weeks, index=len(available_weeks)-2)
-        w2 = st.sidebar.selectbox("Comparison Week", available_weeks, index=len(available_weeks)-1)
-        
-        def get_week_agg(w):
-            temp = df_m_raw[df_m_raw['Week_Num'] == w]
-            return temp.groupby('Article').agg({'GMV_Val':'sum', 'Spend_Val':'sum', 'Sold_Val':'sum'}).reset_index()
-
-        df_w1 = get_week_agg(w1)
-        df_w2 = get_week_agg(w2)
-        df_comp = pd.merge(df_w1, df_w2, on='Article', suffixes=(f'_w{w1}', f'_w{w2}'), how='outer').fillna(0)
-        df_comp['GMV_Diff'] = df_comp[f'GMV_Val_w{w2}'] - df_comp[f'GMV_Val_w{w1}']
-
-    # C. Latest Week Processing
+    # B. Latest Week Processing
     df_m_latest = df_m_raw[df_m_raw['Week_Num'] == latest_week].copy()
     
     def detect_group(row):
@@ -101,27 +88,27 @@ if z_marketing and stock_file:
     df_m_agg['ROAS_Actual'] = df_m_agg['GMV_Val'] / df_m_agg['Spend_Val'].replace(0, 1)
     df_m_agg = pd.merge(df_m_agg, gender_lock, on='Article', how='left')
 
-    # D. Inventory Processing (With Season, Variant & Exclusion Rules)
+    # D. Inventory Processing
     df_s_raw['Article'] = df_s_raw.iloc[:, 4].apply(standardize_sku)
-    df_s_raw['Season'] = df_s_raw.iloc[:, 8].astype(str).str.strip() # Kolumn I
-    df_s_raw['Partner_Article_Variant'] = df_s_raw.iloc[:, 2].astype(str).str.strip() # Kolumn C
+    df_s_raw['Season'] = df_s_raw.iloc[:, 8].astype(str).str.strip() 
+    df_s_raw['brand'] = df_s_raw.iloc[:, 7].astype(str).str.strip() # Kolumn H
+    df_s_raw['Partner_Article_Variant'] = df_s_raw.iloc[:, 2].astype(str).str.strip() 
     
     stock_cols = [c for c in df_s_raw.columns if 'STOCK' in c.upper()]
     for col in stock_cols: 
         df_s_raw[col] = clean_numeric(df_s_raw[col])
     
-    # Aggregera lager och inkludera säsong & variant
     df_s_pivot = df_s_raw.groupby('Article').agg({
         **{col: 'sum' for col in stock_cols},
         'Season': 'first',
+        'brand': 'first',
         'Partner_Article_Variant': 'first'
     }).reset_index()
     
     df_s_pivot['Total_Stock'] = df_s_pivot[stock_cols].sum(axis=1)
     
-    # REGEL 1: Exkludera artiklar med 0 i lager
-    # REGEL 2: Måste ha ett Partner_Article_Variant nummer (inte tomt eller 'nan')
-    df_s_pivot = df_s_pivot[
+    # REGEL-filtrering för lager-vyer
+    df_s_valid = df_s_pivot[
         (df_s_pivot['Total_Stock'] > 0) & 
         (df_s_pivot['Partner_Article_Variant'].notna()) & 
         (df_s_pivot['Partner_Article_Variant'] != 'nan') & 
@@ -129,7 +116,7 @@ if z_marketing and stock_file:
     ].copy()
 
     # E. Merge & Tiering
-    df = pd.merge(df_m_agg, df_s_pivot[['Article', 'Total_Stock', 'Season']], on='Article', how='left').fillna(0)
+    df = pd.merge(df_m_agg, df_s_valid[['Article', 'Total_Stock', 'Season', 'brand']], on='Article', how='left').fillna({'Total_Stock': 0, 'brand': 'Unknown'})
     df['Daily_Velocity'] = df['Sold_Val'] / 7
     df['Days_Left'] = df['Total_Stock'] / df['Daily_Velocity'].replace(0, 0.001)
 
@@ -140,68 +127,132 @@ if z_marketing and stock_file:
 
     df['Tier'] = df.apply(assign_tier, axis=1)
 
-    # --- 4. SYNC LOGIC: DUPLICATES & MISSING ---
-    # 1. Duplicates
-    m_valid = df_m_latest[df_m_latest['Article'] != 'UNDEFINED']
-    dupe_counts = m_valid.groupby('Article')['ZMSCampaign'].nunique()
-    multi_skus = dupe_counts[dupe_counts > 1].index.tolist()
-    df_dupes_out = m_valid[m_valid['Article'].isin(multi_skus)][['Article', 'ZMSCampaign', 'GMV_Val', 'Spend_Val']].sort_values('Article')
+    # --- 4. TABS SETUP ---
+    tab1, tab2 = st.tabs(["🚀 Kampanjfördelning", "🏷️ Varumärkesöversikt"])
 
-    # 2. Missing (Only items meeting all rules from step 3D)
-    inv_skus = set(df_s_pivot[df_s_pivot['Article'] != 'UNDEFINED']['Article'])
-    zms_skus = set(df_m_agg[df_m_agg['Article'] != 'UNDEFINED']['Article'])
-    missing_skus_list = list(inv_skus - zms_skus)
-    df_missing_raw = df_s_pivot[df_s_pivot['Article'].isin(missing_skus_list)][['Article', 'Total_Stock', 'Season', 'Partner_Article_Variant']]
+    with tab1:
+        # --- ORIGINAL DASHBOARD LOGIC ---
+        if do_compare and len(available_weeks) >= 2:
+            st.sidebar.subheader("Select Weeks to Compare")
+            w1 = st.sidebar.selectbox("Base Week", available_weeks, index=len(available_weeks)-2)
+            w2 = st.sidebar.selectbox("Comparison Week", available_weeks, index=len(available_weeks)-1)
+            
+            def get_week_agg(w):
+                temp = df_m_raw[df_m_raw['Week_Num'] == w]
+                return temp.groupby('Article').agg({'GMV_Val':'sum', 'Spend_Val':'sum', 'Sold_Val':'sum'}).reset_index()
 
-    # --- 5. DASHBOARD OUTPUT ---
-    if do_compare and len(available_weeks) >= 2:
-        st.header(f"📈 Performance Jämförelse: Vecka {w1} vs {w2}")
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total GMV Change", f"{df_comp['GMV_Diff'].sum():,.0f} SEK")
-        c2.metric("New Articles", len(df_comp[df_comp[f'GMV_Val_w{w1}'] == 0]))
-        c3.metric("Dropped Articles", len(df_comp[df_comp[f'GMV_Val_w{w2}'] == 0]))
+            df_w1 = get_week_agg(w1)
+            df_w2 = get_week_agg(w2)
+            df_comp = pd.merge(df_w1, df_w2, on='Article', suffixes=(f'_w{w1}', f'_w{w2}'), how='outer').fillna(0)
+            df_comp['GMV_Diff'] = df_comp[f'GMV_Val_w{w2}'] - df_comp[f'GMV_Val_w{w1}']
+
+            st.header(f"📈 Performance Jämförelse: Vecka {w1} vs {w2}")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Total GMV Change", f"{df_comp['GMV_Diff'].sum():,.0f} SEK")
+            c2.metric("New Articles", len(df_comp[df_comp[f'GMV_Val_w{w1}'] == 0]))
+            c3.metric("Dropped Articles", len(df_comp[df_comp[f'GMV_Val_w{w2}'] == 0]))
+            st.divider()
+
+        st.header(f"📊 Kampanjfördelning (Vecka {latest_week})")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Unique Articles", len(df))
+        m2.metric("Overall ROAS", f"{(df['GMV_Val'].sum()/df['Spend_Val'].sum()):.2f}" if df['Spend_Val'].sum() > 0 else "0.0")
+        m3.metric("Stock Alerts", len(df[(df['Tier'] == 'TOP') & (df['Days_Left'] < days_threshold) & (df['Sold_Val'] > 0)]))
+        m4.metric("Matched Inventory", f"{df['Total_Stock'].sum():,.0f} units")
+
         st.divider()
-
-    st.header(f"📊 Final Campaign Distribution (Week {latest_week})")
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Unique Articles", len(df))
-    m2.metric("Overall ROAS", f"{(df['GMV_Val'].sum()/df['Spend_Val'].sum()):.2f}" if df['Spend_Val'].sum() > 0 else "0.0")
-    m3.metric("Stock Alerts", len(df[(df['Tier'] == 'TOP') & (df['Days_Left'] < days_threshold) & (df['Sold_Val'] > 0)]))
-    m4.metric("Matched Inventory", f"{df['Total_Stock'].sum():,.0f} units")
-
-    st.divider()
-    st.subheader("🔄 Sync Status & Clean-up")
-    col_d, col_m = st.columns(2)
-    
-    with col_d:
-        st.markdown("**Multi-Campaign Duplicates**")
-        if not df_dupes_out.empty:
-            st.dataframe(df_dupes_out, height=300, use_container_width=True)
-            st.download_button("📥 Download Duplicates CSV", df_dupes_out.to_csv(index=False).encode('utf-8'), "multi_campaign_skus.csv")
-    
-    with col_m:
-        st.markdown("**Missing from ZMS (In Stock)**")
-        # Säsongsfilter
-        all_seasons = sorted(df_missing_raw['Season'].unique())
-        selected_seasons = st.multiselect("Filter by Season", options=all_seasons, default=all_seasons)
+        st.subheader("🔄 Sync Status & Clean-up")
+        col_d, col_m = st.columns(2)
         
-        df_missing_filtered = df_missing_raw[df_missing_raw['Season'].isin(selected_seasons)]
+        with col_d:
+            st.markdown("**Multi-Campaign Duplicates**")
+            m_valid_skus = df_m_latest[df_m_latest['Article'] != 'UNDEFINED']
+            dupe_counts = m_valid_skus.groupby('Article')['ZMSCampaign'].nunique()
+            multi_skus = dupe_counts[dupe_counts > 1].index.tolist()
+            df_dupes_out = m_valid_skus[m_valid_skus['Article'].isin(multi_skus)][['Article', 'ZMSCampaign', 'GMV_Val', 'Spend_Val']].sort_values('Article')
+            if not df_dupes_out.empty:
+                st.dataframe(df_dupes_out, height=250, use_container_width=True)
+                st.download_button("📥 Download Duplicates CSV", df_dupes_out.to_csv(index=False).encode('utf-8'), "multi_campaign_skus.csv")
         
-        st.dataframe(df_missing_filtered, height=300, use_container_width=True)
-        st.download_button("📥 Download Missing SKUs CSV", df_missing_filtered.to_csv(index=False).encode('utf-8'), "missing_from_zms.csv")
+        with col_m:
+            st.markdown("**Missing from ZMS (In Stock)**")
+            inv_skus = set(df_s_valid[df_s_valid['Article'] != 'UNDEFINED']['Article'])
+            zms_skus = set(df_m_agg[df_m_agg['Article'] != 'UNDEFINED']['Article'])
+            missing_skus_list = list(inv_skus - zms_skus)
+            df_missing_raw = df_s_valid[df_s_valid['Article'].isin(missing_skus_list)][['Article', 'Total_Stock', 'Season', 'Partner_Article_Variant']]
+            
+            all_seasons = sorted(df_missing_raw['Season'].unique())
+            selected_seasons = st.multiselect("Filter by Season", options=all_seasons, default=all_seasons)
+            df_missing_filtered = df_missing_raw[df_missing_raw['Season'].isin(selected_seasons)]
+            st.dataframe(df_missing_filtered, height=250, use_container_width=True)
+            st.download_button("📥 Download Missing SKUs CSV", df_missing_filtered.to_csv(index=False).encode('utf-8'), "missing_from_zms.csv")
 
-    st.divider()
-    for group in ['FEMALE', 'MALE_UNISEX_KIDS']:
-        st.subheader(f"📂 {group} Campaign Tiers")
-        cols = st.columns(3)
-        for i, tier in enumerate(['TOP', 'MEDIUM', 'LOW']):
-            with cols[i]:
-                subset = df[(df['Group_Draft'] == group) & (df['Tier'] == tier)]
-                skus = subset['Article'].unique().tolist()
-                st.markdown(f"**{tier} {group}**")
-                st.metric("Articles", len(skus))
-                st.text_area("SKU List", ",".join(skus), height=150, key=f"t_{group}_{tier}", label_visibility="collapsed")
-                st.download_button("Export CSV", pd.DataFrame(skus).to_csv(index=False, header=False).encode('utf-8'), f"{group}_{tier}.csv", key=f"d_{group}_{tier}")
+        st.divider()
+        for group in ['FEMALE', 'MALE_UNISEX_KIDS']:
+            st.subheader(f"📂 {group} Campaign Tiers")
+            cols = st.columns(3)
+            for i, tier in enumerate(['TOP', 'MEDIUM', 'LOW']):
+                with cols[i]:
+                    subset = df[(df['Group_Draft'] == group) & (df['Tier'] == tier)]
+                    skus = subset['Article'].unique().tolist()
+                    st.markdown(f"**{tier} {group}**")
+                    st.metric("Articles", len(skus))
+                    st.text_area("SKU List", ",".join(skus), height=150, key=f"t_{group}_{tier}", label_visibility="collapsed")
+                    st.download_button("Export CSV", pd.DataFrame(skus).to_csv(index=False, header=False).encode('utf-8'), f"{group}_{tier}.csv", key=f"d_{group}_{tier}")
+
+    with tab2:
+        st.header("🏷️ Brand Performance Overview")
+        st.markdown("Baserat på all marknadsföringsdata i rapporten.")
+
+        # Aggregera all data per artikel (inte bara senaste veckan för en total överblick)
+        # Men vi använder mappen från inventory-filen
+        brand_map = df_s_pivot[['Article', 'brand']].drop_duplicates('Article')
+        
+        # Aggregera total marknadsföring
+        df_m_total = df_m_raw.groupby('Article').agg({
+            'Spend_Val': 'sum',
+            'GMV_Val': 'sum',
+            'Sold_Val': 'sum'
+        }).reset_index()
+
+        df_brand = pd.merge(df_m_total, brand_map, on='Article', how='left').fillna({'brand': 'Unknown'})
+        
+        # Gruppera per varumärke
+        brand_stats = df_brand.groupby('brand').agg({
+            'Spend_Val': 'sum',
+            'GMV_Val': 'sum',
+            'Sold_Val': 'sum'
+        }).reset_index()
+
+        # Beräkna Shares och KPI:er
+        total_budget = brand_stats['Spend_Val'].sum()
+        total_gmv = brand_stats['GMV_Val'].sum()
+
+        brand_stats['Budget Share (%)'] = (brand_stats['Spend_Val'] / total_budget * 100).round(1) if total_budget > 0 else 0
+        brand_stats['GMV Share (%)'] = (brand_stats['GMV_Val'] / total_gmv * 100).round(1) if total_gmv > 0 else 0
+        brand_stats['ROAS'] = (brand_stats['GMV_Val'] / brand_stats['Spend_Val'].replace(0, 1)).round(2)
+        brand_stats['COS (%)'] = (brand_stats['Spend_Val'] / brand_stats['GMV_Val'].replace(0, 1) * 100).round(1)
+
+        # Snygga till kolumnnamn för visning
+        brand_stats_display = brand_stats.rename(columns={
+            'brand': 'Brand',
+            'Spend_Val': 'Total Budget (SEK)',
+            'GMV_Val': 'Total GMV (SEK)',
+            'Sold_Val': 'Items Sold'
+        }).sort_values('Total GMV (SEK)', ascending=False)
+
+        # Visa Metrics
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Total Budget", f"{total_budget:,.0f} SEK")
+        c2.metric("Total GMV", f"{total_gmv:,.0f} SEK")
+        c3.metric("Avg ROAS", f"{(total_gmv/total_budget if total_budget > 0 else 0):.2f}")
+        c4.metric("Avg COS", f"{(total_budget/total_gmv*100 if total_gmv > 0 else 0):.1f}%")
+
+        st.divider()
+        st.dataframe(brand_stats_display, use_container_width=True, hide_index=True)
+        
+        # Möjlighet att ladda ner varumärkesrapporten
+        st.download_button("📥 Exportera Varumärkesrapport", brand_stats_display.to_csv(index=False).encode('utf-8'), "brand_performance.csv")
 
 else:
     st.info("👋 Everything is ready. Just upload your Marketing and Inventory files to begin.")
