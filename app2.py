@@ -54,11 +54,11 @@ with st.sidebar:
 
     st.divider()
     st.header("🏆 TOP Tier Thresholds")
-    t_stock = st.number_input("Min Stock (TOP)", value=60)
+    t_stock = st.number_input("Min Stock (TOP)", value=100)
     t_roas = st.number_input("Min ROAS (TOP)", value=10.0)
     
     st.header("🥈 MEDIUM Tier Thresholds")
-    m_stock = st.number_input("Min Stock (MED)", value=40)
+    m_stock = st.number_input("Min Stock (MED)", value=60)
     m_roas = st.number_input("Min ROAS (MED)", value=4.0)
 
     st.header("⚠️ Stock Warning")
