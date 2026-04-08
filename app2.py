@@ -193,9 +193,9 @@ if z_marketing and stock_file:
             zms_skus = set(df_m_agg[df_m_agg['Article'] != 'UNDEFINED']['Article'])
             missing_skus_list = list(inv_skus - zms_skus)
             
-            # Filter: Include only items with stock > 10 in the missing list
+            # Ändra denna rad för att kräva mer än 10 i lager
             df_missing_raw = df_s_valid[df_s_valid['Article'].isin(missing_skus_list)][['Article', 'Total_Stock', 'Season', 'Partner_Article_Variant']]
-            df_missing_raw = df_missing_raw[df_missing_raw['Total_Stock'] > 10]
+            df_missing_raw = df_missing_raw[df_missing_raw['Total_Stock'] > 10] # Krav på > 10
             
             all_seasons = sorted(df_missing_raw['Season'].unique())
             selected_seasons = st.multiselect("Filter by Season", options=all_seasons, default=all_seasons)
@@ -209,8 +209,11 @@ if z_marketing and stock_file:
             cols = st.columns(3)
             for i, tier in enumerate(['TOP', 'MEDIUM', 'LOW']):
                 with cols[i]:
-                    # Filter: Only include items that actually have stock (> 0)
+                    # VIKTIGT: Här filtrerar vi så att endast artiklar med lagersaldo > 0 inkluderas.
+                    # Eftersom 'df' är byggd på 'df_m_agg' (som i sin tur kommer från 'df_m_latest'),
+                    # så är detta automatiskt baserat på den senaste veckan.
                     subset = df[(df['Group_Draft'] == group) & (df['Tier'] == tier) & (df['Total_Stock'] > 0)]
+                    
                     skus = subset['Article'].unique().tolist()
                     st.markdown(f"**{tier} {group}**")
                     st.metric("Articles", len(skus))
