@@ -91,9 +91,14 @@ if z_marketing and stock_file:
     # B. Latest Week Processing
     df_m_latest = df_m_raw[df_m_raw['Week_Num'] == latest_week].copy()
     
-    def detect_group(row):
-        g = str(row).lower()
-        return 'FEMALE' if 'dam' in g or 'fem' in g else 'MALE_UNISEX_KIDS'
+    def detect_group(val):
+        """Strikt mappning baserad på exakta värden i Gender-kolumnen"""
+        v = str(val).strip()
+        # Endast dessa två kategorier tillåts i Female-gruppen
+        if v in ['Damen', 'KinderMädchen']:
+            return 'FEMALE'
+        # Allt annat (Herren, Kinder, Unisex, KinderUnisex, KinderJungen) hamnar här
+        return 'MALE_UNISEX_KIDS'
     
     gender_col = [c for c in df_m_raw.columns if 'Gender' in c][0]
     df_m_latest['Group_Draft'] = df_m_latest[gender_col].apply(detect_group)
