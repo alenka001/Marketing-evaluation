@@ -69,8 +69,7 @@ if z_marketing and stock_file:
     df_m_raw = load_csv(z_marketing)
     df_s_raw = load_csv(stock_file)
 
-    # A. Marketing Data Processing (Mapping med flexibla namn)
-    # Vi mappar de nya namnen med mellanslag
+    # A. Marketing Data Processing
     m_cols = {
         'Week': [c for c in df_m_raw.columns if 'Week' in c][0],
         'SKU': [c for c in df_m_raw.columns if 'SKU' in c][0],
@@ -96,7 +95,6 @@ if z_marketing and stock_file:
         g = str(row).lower()
         return 'FEMALE' if 'dam' in g or 'fem' in g else 'MALE_UNISEX_KIDS'
     
-    # Försök hitta Gender-kolumnen
     gender_col = [c for c in df_m_raw.columns if 'Gender' in c][0]
     df_m_latest['Group_Draft'] = df_m_latest[gender_col].apply(detect_group)
     gender_lock = df_m_latest.sort_values('Group_Draft').groupby('Article')['Group_Draft'].first().reset_index()
@@ -179,6 +177,7 @@ if z_marketing and stock_file:
         col_d, col_m = st.columns(2)
         
         with col_d:
+            # Script line: Analysis is restricted ONLY to the latest week of marketing data.
             st.markdown("**Multi-Campaign Duplicates**")
             m_valid_skus = df_m_latest[df_m_latest['Article'] != 'UNDEFINED']
             dupe_counts = m_valid_skus.groupby('Article')[m_cols['Campaign']].nunique()
@@ -193,7 +192,10 @@ if z_marketing and stock_file:
             inv_skus = set(df_s_valid[df_s_valid['Article'] != 'UNDEFINED']['Article'])
             zms_skus = set(df_m_agg[df_m_agg['Article'] != 'UNDEFINED']['Article'])
             missing_skus_list = list(inv_skus - zms_skus)
+            
+            # Filter: Include only items with stock > 10 in the missing list
             df_missing_raw = df_s_valid[df_s_valid['Article'].isin(missing_skus_list)][['Article', 'Total_Stock', 'Season', 'Partner_Article_Variant']]
+            df_missing_raw = df_missing_raw[df_missing_raw['Total_Stock'] > 10]
             
             all_seasons = sorted(df_missing_raw['Season'].unique())
             selected_seasons = st.multiselect("Filter by Season", options=all_seasons, default=all_seasons)
@@ -207,7 +209,8 @@ if z_marketing and stock_file:
             cols = st.columns(3)
             for i, tier in enumerate(['TOP', 'MEDIUM', 'LOW']):
                 with cols[i]:
-                    subset = df[(df['Group_Draft'] == group) & (df['Tier'] == tier)]
+                    # Filter: Only include items that actually have stock (> 0)
+                    subset = df[(df['Group_Draft'] == group) & (df['Tier'] == tier) & (df['Total_Stock'] > 0)]
                     skus = subset['Article'].unique().tolist()
                     st.markdown(f"**{tier} {group}**")
                     st.metric("Articles", len(skus))
