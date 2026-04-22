@@ -182,15 +182,22 @@ if z_marketing and stock_file:
         col_d, col_m = st.columns(2)
         
         with col_d:
-            # Script line: Analysis is restricted ONLY to the latest week of marketing data.
             st.markdown("**Multi-Campaign Duplicates**")
-            m_valid_skus = df_m_latest[df_m_latest['Article'] != 'UNDEFINED']
-            dupe_counts = m_valid_skus.groupby('Article')[m_cols['Campaign']].nunique()
+            # LOGIK: Endast artiklar med Spend > 0 i den senaste veckan (df_m_latest)
+            m_active_skus = df_m_latest[(df_m_latest['Article'] != 'UNDEFINED') & (df_m_latest['Spend_Val'] > 0)]
+            
+            # Räkna unika kampanjer per artikel
+            dupe_counts = m_active_skus.groupby('Article')[m_cols['Campaign']].nunique()
             multi_skus = dupe_counts[dupe_counts > 1].index.tolist()
-            df_dupes_out = m_valid_skus[m_valid_skus['Article'].isin(multi_skus)][['Article', m_cols['Campaign'], 'GMV_Val', 'Spend_Val']].sort_values('Article')
+            
+            # Skapa tabellen för export
+            df_dupes_out = m_active_skus[m_active_skus['Article'].isin(multi_skus)][['Article', m_cols['Campaign'], 'GMV_Val', 'Spend_Val']].sort_values('Article')
+            
             if not df_dupes_out.empty:
                 st.dataframe(df_dupes_out, height=250, use_container_width=True)
                 st.download_button("📥 Download Duplicates CSV", df_dupes_out.to_csv(index=False).encode('utf-8'), "multi_campaign_skus.csv")
+            else:
+                st.success("Inga aktiva dubbletter med spend hittades denna vecka.")
         
         with col_m:
             st.markdown("**Missing from ZMS (In Stock)**")
