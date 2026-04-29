@@ -11,7 +11,6 @@ st.markdown("### Integrated: Country Clustering, Article Sync, and Strict Gender
 
 # --- 1. UTILITIES ---
 def clean_numeric(series):
-    """Hanterar europeisk formatering (1.454,95 -> 1454.95)"""
     def fix_string(val):
         if pd.isna(val): return "0"
         val = str(val).strip()
@@ -25,7 +24,6 @@ def clean_numeric(series):
     return pd.to_numeric(s, errors='coerce').fillna(0)
 
 def standardize_sku(sku):
-    """Klipper SKU till 13 tecken (Config ID)"""
     s = str(sku).strip().upper().replace('.0', '')
     if '-' in s:
         parts = s.split('-')
@@ -34,7 +32,6 @@ def standardize_sku(sku):
     return s
 
 def load_csv(file):
-    """Auto-detekterar format för europeiska CSV-filer"""
     if file is None: return None
     raw_data = file.read(40000)
     file.seek(0)
@@ -45,7 +42,6 @@ def load_csv(file):
     return pd.read_csv(file, sep=sep, encoding='utf-8' if 'utf-8' in sample else 'latin-1')
 
 def run_manual_kmeans(df, features, k=3, iterations=10):
-    """Manuell K-Means för att slippa biblioteksberoenden"""
     if len(df) < k: return np.zeros(len(df))
     data = df[features].values
     min_vals = data.min(axis=0)
@@ -65,36 +61,25 @@ def run_manual_kmeans(df, features, k=3, iterations=10):
         centroids = new_centroids
     return labels
 
-# --- 2. SIDEBAR ---
+# --- 2. SIDEBAR: DATA UPLOAD ---
 with st.sidebar:
     st.header("📂 Data Upload")
     z_marketing = st.file_uploader("1. SKU Report (Country Split)", type="csv")
     stock_file = st.file_uploader("2. Inventory File", type="csv")
     
     st.divider()
-    st.header("⚖️ Comparison Mode")
-    do_compare = st.checkbox("Enable Week-over-Week Comparison")
-
-    st.divider()
-    st.header("🏆 TOP Tier Thresholds")
+    st.header("🏆 Performance Thresholds")
     t_stock = st.number_input("Min Stock (TOP)", value=100)
     t_roas = st.number_input("Min ROAS (TOP)", value=10.0)
-    
-    st.header("🥈 MEDIUM Tier Thresholds")
     m_stock = st.number_input("Min Stock (MED)", value=60)
     m_roas = st.number_input("Min ROAS (MED)", value=4.0)
-
-    st.divider()
-    st.header("📅 Tidsfilter (Kluster)")
-    all_months = sorted(df_m_raw[df_m_raw['Month_Num'] > 0]['Month_Num'].unique())
-    selected_months = st.multiselect("Basera kluster på månad(er):", options=all_months, default=all_months)
 
 # --- 3. DATA PROCESSING ENGINE ---
 if z_marketing and stock_file:
     df_m_raw = load_csv(z_marketing)
     df_s_raw = load_csv(stock_file)
 
-    # A. Flexibel Kolumnmappning
+    # A. Kolumnmappning
     m_cols_list = df_m_raw.columns.tolist()
     m_cols = {
         'Month': [c for c in m_cols_list if 'Month' in c][0],
@@ -109,7 +94,7 @@ if z_marketing and stock_file:
     }
     country_col = next((c for c in m_cols_list if 'Target' in c and 'Country' in c or 'Country' in c), None)
 
-    # B. Grundtvätt & Förberedelse av filter-värden
+    # B. Grundtvätt
     df_m_raw['Week_Num'] = clean_numeric(df_m_raw[m_cols['Week']])
     df_m_raw['Month_Num'] = clean_numeric(df_m_raw[m_cols['Month']]).astype(int)
     df_m_raw['Article'] = df_m_raw[m_cols['SKU']].apply(standardize_sku)
@@ -118,57 +103,41 @@ if z_marketing and stock_file:
     df_m_raw['Sold_Val'] = clean_numeric(df_m_raw[m_cols['Sold']])
     df_m_raw['Clicks_Val'] = clean_numeric(df_m_raw[m_cols['Clicks']])
 
-    # --- UI FÖR FILTER (Måste ligga här för att variablerna ska skapas innan beräkning) ---
+    # --- UI FILTER (Månad) ---
     with st.sidebar:
         st.divider()
         st.header("📅 Tidsfilter (Kluster)")
         all_months = sorted(df_m_raw[df_m_raw['Month_Num'] > 0]['Month_Num'].unique())
-        selected_months = st.multiselect(
-            "Basera landsklustring på månad(er):",
-            options=all_months,
-            default=all_months,
-            help="Välj vilka månader som ska ligga till grund för beräkningen av landskluster."
-        )
+        selected_months = st.multiselect("Basera kluster på månad(er):", options=all_months, default=all_months)
 
-    # --- 🌍 GLOBAL LANDSKLUSTRING (Nu med korrekt filter) ---
+    # --- 🌍 GLOBAL LANDSKLUSTRING ---
     cluster_mapping = {}
     df_country_summary = pd.DataFrame()
     
     if country_col and selected_months:
-        # 1. Filtrera på valda månader
         df_c_filtered = df_m_raw[df_m_raw['Month_Num'].isin(selected_months)]
-        
-        # 2. Aggregera baserat på filtrerad data
-        df_c_logic = df_c_filtered.groupby(country_col).agg({
-            'Spend_Val': 'sum', 'Clicks_Val': 'sum', 'GMV_Val': 'sum'
-        }).reset_index()
+        df_c_logic = df_c_filtered.groupby(country_col).agg({'Spend_Val':'sum', 'Clicks_Val':'sum', 'GMV_Val':'sum'}).reset_index()
         
         df_c_logic['ROAS'] = df_c_logic['GMV_Val'] / df_c_logic['Spend_Val'].replace(0, 1)
         df_c_logic['COS'] = df_c_logic['Spend_Val'] / df_c_logic['GMV_Val'].replace(0, 1)
         df_c_logic['CPC'] = df_c_logic['Spend_Val'] / df_c_logic['Clicks_Val'].replace(0, 1)
         
         df_c_input = df_c_logic[df_c_logic['Spend_Val'] > 0].copy()
-        
         if len(df_c_input) >= 3:
             df_c_input['Cluster_ID'] = run_manual_kmeans(df_c_input, ['ROAS', 'COS', 'CPC'], k=3)
             cluster_mapping = dict(zip(df_c_input[country_col], df_c_input['Cluster_ID']))
             df_country_summary = df_c_input
 
-    # Koppla Kluster-resultat till rådatan
+    # Koppla Kluster till data
     df_m_raw['Cluster_ID'] = df_m_raw[country_col].map(cluster_mapping).fillna(-1).astype(int)
 
-    # UI för Kluster-val (efter att Cluster_ID skapats)
+    # --- UI FILTER (Kluster Selection) ---
     with st.sidebar:
         st.header("🌍 Cluster Selection")
         unique_cl = sorted(df_m_raw['Cluster_ID'].unique())
-        selected_clusters = st.multiselect(
-            "Active Clusters:", 
-            options=unique_cl, 
-            default=unique_cl, 
-            format_func=lambda x: f"Cluster {x}" if x != -1 else "Unknown"
-        )
-    # (Resten av din kod för detect_group, inventory och tabbar fortsätter härifrån...)
-    # C. Senaste Veckan & Gender Lock
+        selected_clusters = st.multiselect("Aktiva kluster i dashboard:", options=unique_cl, default=unique_cl, format_func=lambda x: f"Kluster {x}" if x != -1 else "Unknown")
+
+    # C. Dashboard Processing (Latest Week)
     available_weeks = sorted(df_m_raw[df_m_raw['Week_Num'] > 0]['Week_Num'].unique().astype(int))
     latest_week = max(available_weeks) if available_weeks else 0
     df_m_latest = df_m_raw[df_m_raw['Week_Num'] == latest_week].copy()
@@ -180,7 +149,7 @@ if z_marketing and stock_file:
     df_m_latest['Group_Draft'] = df_m_latest[m_cols['Gender']].apply(detect_group)
     gender_lock = df_m_latest.sort_values('Group_Draft').groupby('Article')['Group_Draft'].first().reset_index()
 
-    # FILTRERING BASERAT PÅ KLUSTER
+    # Filtrera dashboard på valda kluster
     df_m_filtered = df_m_latest[df_m_latest['Cluster_ID'].isin(selected_clusters)]
     df_m_agg = df_m_filtered.groupby('Article').agg({'GMV_Val':'sum', 'Spend_Val':'sum', 'Sold_Val':'sum'}).reset_index()
     df_m_agg['ROAS_Actual'] = df_m_agg['GMV_Val'] / df_m_agg['Spend_Val'].replace(0, 1)
@@ -221,7 +190,7 @@ if z_marketing and stock_file:
         m4.metric("Matched Inventory", f"{df['Total_Stock'].sum():,.0f} units")
         st.divider()
         for group in ['FEMALE', 'MALE_UNISEX_KIDS']:
-            st.subheader(f"📂 {group} Tiers")
+            st.subheader(f"📂 {group} Campaign Tiers")
             cols = st.columns(3)
             for i, tier in enumerate(['TOP', 'MEDIUM', 'LOW']):
                 with cols[i]:
@@ -257,6 +226,7 @@ if z_marketing and stock_file:
     with tab4:
         st.header("🌍 Automated Country Clusters")
         if not df_country_summary.empty:
+            st.info(f"Klustring baserad på månad(er): {selected_months}")
             st.dataframe(df_country_summary.sort_values('Cluster_ID'), use_container_width=True)
             st.download_button("📥 Download Country Data", df_country_summary.to_csv(index=False).encode('utf-8'), "country_clusters.csv")
 
