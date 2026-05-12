@@ -11,7 +11,7 @@ except ImportError:
 
 # --- Page Setup ---
 st.set_page_config(page_title="Zalando Marketing expert", layout="wide")
-st.title("🚀 Swedemount Expert: Global Performance & Sync")
+st.title("Swedemount Expert: Global Performance & Sync")
 st.markdown("### Integrated: Country Clustering, Article Sync, and MoM Comparison")
 
 # --- 1. UTILITIES ---
@@ -112,15 +112,24 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
             m_roas = st.number_input("Min ROAS (MED)", value=4.0)
             
             st.divider()
-            st.header("📅 Kluster-månader")
-            all_months = sorted(df_m_raw[df_m_raw['Month_Num'] > 0]['Month_Num'].unique())
-            selected_months = st.multiselect("Basera kluster på:", options=all_months, default=all_months)
+            st.header("🌍 Kluster-inställningar")
+            cluster_base = st.radio("Beräkna kluster baserat på:", ["Månad", "Vecka"])
+    
+            if cluster_base == "Månad":
+                all_periods = sorted(df_m_raw[df_m_raw['Month_Num'] > 0]['Month_Num'].unique())
+                period_col = 'Month_Num'
+            else:
+                all_periods = sorted(df_m_raw[df_m_raw['Week_Num'] > 0]['Week_Num'].unique())
+                period_col = 'Week_Num'
+        
+            selected_periods = st.multiselect(f"Välj {cluster_base.lower()}(er):", options=all_periods, default=all_periods)
 
         # --- 🌍 GLOBAL LANDSKLUSTRING ---
         cluster_mapping = {}
         df_country_summary = pd.DataFrame()
-        if country_col and selected_months:
-            df_c_filtered = df_m_raw[df_m_raw['Month_Num'].isin(selected_months)]
+        if country_col and selected_periods:
+            # Vi använder period_col (antingen Month_Num eller Week_Num)
+            df_c_filtered = df_m_raw[df_m_raw[period_col].isin(selected_periods)]
             df_c_logic = df_c_filtered.groupby(country_col).agg({'Spend_Val':'sum', 'Clicks_Val':'sum', 'GMV_Val':'sum'}).reset_index()
             df_c_logic['ROAS'] = df_c_logic['GMV_Val'] / df_c_logic['Spend_Val'].replace(0, 1)
             df_c_logic['COS'] = df_c_logic['Spend_Val'] / df_c_logic['GMV_Val'].replace(0, 1)
@@ -159,10 +168,16 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
         df_s_raw['Article'] = df_s_raw.iloc[:, 4].apply(standardize_sku)
         df_s_raw['Season'] = df_s_raw.iloc[:, 8].astype(str).str.strip() 
         df_s_raw['brand'] = df_s_raw.iloc[:, 7].astype(str).str.strip()
-        stock_cols = [c for c in df_s_raw.columns if 'STOCK' in c.upper()]
-        for col in stock_cols: df_s_raw[col] = clean_numeric(df_s_raw[col])
-        df_s_pivot = df_s_raw.groupby('Article').agg({**{col: 'sum' for col in stock_cols}, 'Season': 'first', 'brand': 'first'}).reset_index()
-        df_s_pivot['Total_Stock'] = df_s_pivot[stock_cols].sum(axis=1)
+        
+        zfs_cols = [c for c in df_s_raw.columns if 'ZFS' in c.upper()]
+        if not zfs_cols: 
+            zfs_cols = [c for c in df_s_raw.columns if 'STOCK' in c.upper()] # Fallback
+        
+        for col in zfs_cols: 
+            df_s_raw[col] = clean_numeric(df_s_raw[col])
+            
+        df_s_pivot = df_s_raw.groupby('Article').agg({**{col: 'sum' for col in zfs_cols}, 'Season': 'first', 'brand': 'first'}).reset_index()
+        df_s_pivot['Total_Stock'] = df_s_pivot[zfs_cols].sum(axis=1)
         df_s_valid = df_s_pivot[df_s_pivot['Total_Stock'] > 0].copy()
 
         # E. Merge & Tiering
@@ -179,22 +194,21 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
         with tab1:
             st.header(f"📊 Kampanjhinkar (Vecka {latest_week})")
             m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Unique Articles", len(df))
+            m1.metric("Unika Artiklar", len(df))
             m2.metric("Overall ROAS", f"{(df['GMV_Val'].sum()/df['Spend_Val'].sum()):.2f}" if df['Spend_Val'].sum() > 0 else "0.0")
-            m3.metric("Stock Alerts", len(df[(df['Tier'] == 'TOP') & (df['Total_Stock'] < 20)]))
-            m4.metric("Matched Inventory", f"{df['Total_Stock'].sum():,.0f} units")
+            m3.metric("Stock Alerts (ZFS < 20)", len(df[(df['Tier'] == 'TOP') & (df['Total_Stock'] < 20)]))
+            m4.metric("Matched ZFS Inventory", f"{df['Total_Stock'].sum():,.0f} units")
             st.divider()
-            for group in ['FEMALE', 'MALE_UNISEX_KIDS']:
-                st.subheader(f"📂 {group} Campaign Tiers")
-                cols = st.columns(3)
-                for i, tier in enumerate(['TOP', 'MEDIUM', 'LOW']):
-                    with cols[i]:
-                        subset = df[(df['Group_Draft'] == group) & (df['Tier'] == tier) & (df['Total_Stock'] > 0)]
-                        skus = subset['Article'].unique().tolist()
-                        st.markdown(f"**{tier} {group}**")
-                        st.metric("Articles", len(skus))
-                        st.text_area("SKU List", ",".join(skus), height=150, key=f"t_{group}_{tier}", label_visibility="collapsed")
-                        st.download_button("Export CSV", pd.DataFrame(skus).to_csv(index=False, header=False).encode('utf-8'), f"{group}_{tier}.csv", key=f"d_{group}_{tier}")
+            # En rak loop för TOP, MEDIUM, LOW utan genus-split
+            cols = st.columns(3)
+            for i, tier in enumerate(['TOP', 'MEDIUM', 'LOW']):
+                with cols[i]:
+                    subset = df[df['Tier'] == tier]
+                    skus = subset['Article'].unique().tolist()
+                    st.markdown(f"### {tier}")
+                    st.metric("Artiklar", len(skus))
+                    st.text_area("SKU List", ",".join(skus), height=350, key=f"t_{tier}", label_visibility="collapsed")
+                    st.download_button(f"Export {tier} CSV", pd.DataFrame(skus).to_csv(index=False, header=False).encode('utf-8'), f"{tier}_articles.csv")
 
         with tab2:
             st.header("🏷️ Brand Performance Overview")
