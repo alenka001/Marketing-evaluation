@@ -334,7 +334,7 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
                         
                             st.subheader("📊 Sammanställning per marknad (Veckovis)")
                             df_table_w = df_w_stats.rename(columns={
-                                country_col: 'Land', 'Week_Num': 'Vecka', 'Spend_Val': 'Budget spent', 
+                                country_col: 'Land', 'Week_Num': 'Vecka', 'Spend_Val': 'Budget spent', 'GMV_Val': 'GMV',
                                 'Impressions_Val': 'Impressions', 'Clicks_Val': 'Clicks'
                             })[['Land', 'Vecka', 'Budget spent', 'Impressions', 'Clicks', 'ROAS']]
                         
