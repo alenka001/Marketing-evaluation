@@ -256,97 +256,97 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
             st.header("📈 Landsjämförelse & Trendanalys")
         
             if country_col:
-            df_comp_raw = df_m_raw[df_m_raw[country_col].isin(selected_countries)]
-            comp_type = st.radio("Välj tidsram för jämförelse:", ["Månad över Månad (MoM)", "Vecka för Vecka (Trend upp till 3 veckor)"])
+                df_comp_raw = df_m_raw[df_m_raw[country_col].isin(selected_countries)]
+                comp_type = st.radio("Välj tidsram för jämförelse:", ["Månad över Månad (MoM)", "Vecka för Vecka (Trend upp till 3 veckor)"])
             
-            if comp_type == "Månad över Månad (MoM)":
-                months = sorted(df_comp_raw['Month_Num'].unique())
-                if len(months) >= 2:
-                    sel_m = st.selectbox("Välj huvudmånad att analysera:", options=months, index=len(months)-1, key="comp_m_main")
-                    prev_m = months[months.index(sel_m) - 1] if months.index(sel_m) > 0 else None
+                if comp_type == "Månad över Månad (MoM)":
+                    months = sorted(df_comp_raw['Month_Num'].unique())
+                    if len(months) >= 2:
+                        sel_m = st.selectbox("Välj huvudmånad att analysera:", options=months, index=len(months)-1, key="comp_m_main")
+                        prev_m = months[months.index(sel_m) - 1] if months.index(sel_m) > 0 else None
                     
-                    if prev_m is not None:
-                        st.info(f"Visar Månad {sel_m} jämfört med Månad {prev_m}")
+                        if prev_m is not None:
+                            st.info(f"Visar Månad {sel_m} jämfört med Månad {prev_m}")
                         
-                        df_m_stats = df_comp_raw[df_comp_raw['Month_Num'].isin([sel_m, prev_m])].groupby([country_col, 'Month_Num']).agg({
-                            'Spend_Val': 'sum', 'Impressions_Val': 'sum', 'Clicks_Val': 'sum', 'GMV_Val': 'sum'
-                        }).reset_index()
+                            df_m_stats = df_comp_raw[df_comp_raw['Month_Num'].isin([sel_m, prev_m])].groupby([country_col, 'Month_Num']).agg({
+                                'Spend_Val': 'sum', 'Impressions_Val': 'sum', 'Clicks_Val': 'sum', 'GMV_Val': 'sum'
+                            }).reset_index()
                         
-                        df_m_stats['ROAS'] = (df_m_stats['GMV_Val'] / df_m_stats['Spend_Val'].replace(0, 1)).round(2)
-                        df_m_stats['COS (%)'] = ((df_m_stats['Spend_Val'] / df_m_stats['GMV_Val'].replace(0, 1)) * 100).round(1)
-                        df_m_stats['CPC'] = (df_m_stats['Spend_Val'] / df_m_stats['Clicks_Val'].replace(0, 1)).round(2)
+                            df_m_stats['ROAS'] = (df_m_stats['GMV_Val'] / df_m_stats['Spend_Val'].replace(0, 1)).round(2)
+                            df_m_stats['COS (%)'] = ((df_m_stats['Spend_Val'] / df_m_stats['GMV_Val'].replace(0, 1)) * 100).round(1)
+                            df_m_stats['CPC'] = (df_m_stats['Spend_Val'] / df_m_stats['Clicks_Val'].replace(0, 1)).round(2)
                         
-                        metric_to_plot = st.selectbox("Välj mätetal för grafen:", ["ROAS", "COS (%)", "CPC", "Impressions", "GMV", "Budget Spent"], key="m_metric")
-                        plot_map = {"ROAS": "ROAS", "COS (%)": "COS (%)", "CPC": "CPC", "Impressions": "Impressions_Val", "GMV": "GMV_Val", "Budget Spent": "Spend_Val"}
+                            metric_to_plot = st.selectbox("Välj mätetal för grafen:", ["ROAS", "COS (%)", "CPC", "Impressions", "GMV", "Budget Spent"], key="m_metric")
+                            plot_map = {"ROAS": "ROAS", "COS (%)": "COS (%)", "CPC": "CPC", "Impressions": "Impressions_Val", "GMV": "GMV_Val", "Budget Spent": "Spend_Val"}
                         
-                        df_plot = df_m_stats.copy()
-                        df_plot['Tidsperiod'] = df_plot['Month_Num'].apply(lambda x: f"Månad {x}")
+                            df_plot = df_m_stats.copy()
+                            df_plot['Tidsperiod'] = df_plot['Month_Num'].apply(lambda x: f"Månad {x}")
                         
-                        fig = px.bar(df_plot, x=country_col, y=plot_map[metric_to_plot], color='Tidsperiod', barmode='group',
-                                     color_discrete_sequence=["#999999", "#0b5394"],
-                                     labels={plot_map[metric_to_plot]: metric_to_plot, country_col: "Land"})
-                        st.plotly_chart(fig, use_container_width=True)
+                            fig = px.bar(df_plot, x=country_col, y=plot_map[metric_to_plot], color='Tidsperiod', barmode='group',
+                                         color_discrete_sequence=["#999999", "#0b5394"],
+                                         labels={plot_map[metric_to_plot]: metric_to_plot, country_col: "Land"})
+                            st.plotly_chart(fig, use_container_width=True)
                         
-                        st.subheader("📊 Sammanställning per marknad (Månadsvis)")
-                        df_table_m = df_m_stats.rename(columns={
-                            country_col: 'Land', 'Month_Num': 'Månad', 'Spend_Val': 'Budget spent', 
-                            'Impressions_Val': 'Impressions', 'Clicks_Val': 'Clicks'
-                        })[['Land', 'Månad', 'Budget spent', 'Impressions', 'Clicks', 'ROAS']]
+                            st.subheader("📊 Sammanställning per marknad (Månadsvis)")
+                            df_table_m = df_m_stats.rename(columns={
+                                country_col: 'Land', 'Month_Num': 'Månad', 'Spend_Val': 'Budget spent', 
+                                'Impressions_Val': 'Impressions', 'Clicks_Val': 'Clicks'
+                            })[['Land', 'Månad', 'Budget spent', 'Impressions', 'Clicks', 'ROAS']]
                         
-                        st.dataframe(df_table_m.sort_values(['Land', 'Månad']), use_container_width=True, hide_index=True)
+                            st.dataframe(df_table_m.sort_values(['Land', 'Månad']), use_container_width=True, hide_index=True)
+                        else:
+                            st.warning("Ingen föregående månad hittades i datan.")
                     else:
-                        st.warning("Ingen föregående månad hittades i datan.")
-                else:
-                    st.warning("Datan behöver innehålla minst två olika månader för MoM.")
+                        st.warning("Datan behöver innehålla minst två olika månader för MoM.")
                     
+                else:
+                    weeks = sorted(df_comp_raw['Week_Num'].unique())
+                    if len(weeks) >= 1:
+                        selected_weeks = st.multiselect(
+                            "Välj upp till 3 veckor att jämföra (visas i vald ordning):",
+                            options=weeks,
+                            default=weeks[-3:] if len(weeks) >= 3 else weeks,
+                            max_selections=3
+                        )
+                    
+                        if selected_weeks:
+                            df_w_stats = df_comp_raw[df_comp_raw['Week_Num'].isin(selected_weeks)].groupby([country_col, 'Week_Num']).agg({
+                                'Spend_Val': 'sum', 'Impressions_Val': 'sum', 'Clicks_Val': 'sum', 'GMV_Val': 'sum'
+                            }).reset_index()
+                        
+                            df_w_stats['ROAS'] = (df_w_stats['GMV_Val'] / df_w_stats['Spend_Val'].replace(0, 1)).round(2)
+                            df_w_stats['COS (%)'] = ((df_w_stats['Spend_Val'] / df_w_stats['GMV_Val'].replace(0, 1)) * 100).round(1)
+                            df_w_stats['CPC'] = (df_w_stats['Spend_Val'] / df_w_stats['Clicks_Val'].replace(0, 1)).round(2)
+                        
+                            metric_to_plot = st.selectbox("Välj mätetal för grafen:", ["ROAS", "COS (%)", "CPC", "Impressions", "GMV", "Budget Spent"], key="w_metric")
+                            plot_map = {"ROAS": "ROAS", "COS (%)": "COS (%)", "CPC": "CPC", "Impressions": "Impressions_Val", "GMV": "GMV_Val", "Budget Spent": "Spend_Val"}
+                        
+                            df_plot = df_w_stats.copy()
+                            df_plot['Tidsperiod'] = df_plot['Week_Num'].apply(lambda x: f"Vecka {x}")
+                        
+                            df_plot['Tidsperiod'] = pd.Categorical(df_plot['Tidsperiod'], categories=[f"Vecka {w}" for w in selected_weeks], ordered=True)
+                            df_plot = df_plot.sort_values('Tidsperiod')
+                        
+                            fig = px.bar(df_plot, x=country_col, y=plot_map[metric_to_plot], color='Tidsperiod', barmode='group',
+                                         title=f"{metric_to_plot} utveckling över valda veckor",
+                                         labels={plot_map[metric_to_plot]: metric_to_plot, country_col: "Land"})
+                            st.plotly_chart(fig, use_container_width=True)
+                        
+                            st.subheader("📊 Sammanställning per marknad (Veckovis)")
+                            df_table_w = df_w_stats.rename(columns={
+                                country_col: 'Land', 'Week_Num': 'Vecka', 'Spend_Val': 'Budget spent', 
+                                'Impressions_Val': 'Impressions', 'Clicks_Val': 'Clicks'
+                            })[['Land', 'Vecka', 'Budget spent', 'Impressions', 'Clicks', 'ROAS']]
+                        
+                            df_table_w['Vecka_Sort'] = pd.Categorical(df_table_w['Vecka'], categories=selected_weeks, ordered=True)
+                            df_table_w = df_table_w.sort_values(['Land', 'Vecka_Sort']).drop(columns=['Vecka_Sort'])
+                        
+                            st.dataframe(df_table_w, use_container_width=True, hide_index=True)
+                        else:
+                            st.warning("Välj minst en vecka i listan för att generera analysen.")
+                    else:
+                        st.warning("Inga veckonummer hittades i den uppladdade filen.")
             else:
-                weeks = sorted(df_comp_raw['Week_Num'].unique())
-                if len(weeks) >= 1:
-                    selected_weeks = st.multiselect(
-                        "Välj upp till 3 veckor att jämföra (visas i vald ordning):",
-                        options=weeks,
-                        default=weeks[-3:] if len(weeks) >= 3 else weeks,
-                        max_selections=3
-                    )
-                    
-                    if selected_weeks:
-                        df_w_stats = df_comp_raw[df_comp_raw['Week_Num'].isin(selected_weeks)].groupby([country_col, 'Week_Num']).agg({
-                            'Spend_Val': 'sum', 'Impressions_Val': 'sum', 'Clicks_Val': 'sum', 'GMV_Val': 'sum'
-                        }).reset_index()
-                        
-                        df_w_stats['ROAS'] = (df_w_stats['GMV_Val'] / df_w_stats['Spend_Val'].replace(0, 1)).round(2)
-                        df_w_stats['COS (%)'] = ((df_w_stats['Spend_Val'] / df_w_stats['GMV_Val'].replace(0, 1)) * 100).round(1)
-                        df_w_stats['CPC'] = (df_w_stats['Spend_Val'] / df_w_stats['Clicks_Val'].replace(0, 1)).round(2)
-                        
-                        metric_to_plot = st.selectbox("Välj mätetal för grafen:", ["ROAS", "COS (%)", "CPC", "Impressions", "GMV", "Budget Spent"], key="w_metric")
-                        plot_map = {"ROAS": "ROAS", "COS (%)": "COS (%)", "CPC": "CPC", "Impressions": "Impressions_Val", "GMV": "GMV_Val", "Budget Spent": "Spend_Val"}
-                        
-                        df_plot = df_w_stats.copy()
-                        df_plot['Tidsperiod'] = df_plot['Week_Num'].apply(lambda x: f"Vecka {x}")
-                        
-                        df_plot['Tidsperiod'] = pd.Categorical(df_plot['Tidsperiod'], categories=[f"Vecka {w}" for w in selected_weeks], ordered=True)
-                        df_plot = df_plot.sort_values('Tidsperiod')
-                        
-                        fig = px.bar(df_plot, x=country_col, y=plot_map[metric_to_plot], color='Tidsperiod', barmode='group',
-                                     title=f"{metric_to_plot} utveckling över valda veckor",
-                                     labels={plot_map[metric_to_plot]: metric_to_plot, country_col: "Land"})
-                        st.plotly_chart(fig, use_container_width=True)
-                        
-                        st.subheader("📊 Sammanställning per marknad (Veckovis)")
-                        df_table_w = df_w_stats.rename(columns={
-                            country_col: 'Land', 'Week_Num': 'Vecka', 'Spend_Val': 'Budget spent', 
-                            'Impressions_Val': 'Impressions', 'Clicks_Val': 'Clicks'
-                        })[['Land', 'Vecka', 'Budget spent', 'Impressions', 'Clicks', 'ROAS']]
-                        
-                        df_table_w['Vecka_Sort'] = pd.Categorical(df_table_w['Vecka'], categories=selected_weeks, ordered=True)
-                        df_table_w = df_table_w.sort_values(['Land', 'Vecka_Sort']).drop(columns=['Vecka_Sort'])
-                        
-                        st.dataframe(df_table_w, use_container_width=True, hide_index=True)
-                    else:
-                        st.warning("Välj minst en vecka i listan för att generera analysen.")
-                else:
-                    st.warning("Inga veckonummer hittades i den uppladdade filen.")
-        else:
-            st.error("Kunde inte hitta landskolumnen i marknadsföringsfilen.")
-else:
-    st.info("👋 Everything is ready. Just upload your SKU Report and Inventory file to begin.")
+                st.error("Kunde inte hitta landskolumnen i marknadsföringsfilen.")
+    else:
+        st.info("👋 Everything is ready. Just upload your SKU Report and Inventory file to begin.")
