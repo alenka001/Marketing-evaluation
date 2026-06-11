@@ -354,7 +354,7 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
                         st.warning("Välj minst en vecka i listan för att generera analysen.")
                 else:
                     st.warning("Inga veckonummer hittades i den uppladdade filen.")
-            else:
-                st.error("Kunde inte hitta landskolumnen i marknadsföringsfilen.")
+        else:
+            st.error("Kunde inte hitta landskolumnen i marknadsföringsfilen.")
 else:
     st.info("👋 Everything is ready. Just upload your SKU Report and Inventory file to begin.")
