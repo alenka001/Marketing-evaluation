@@ -350,10 +350,10 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
                         df_table_w = df_table_w.sort_values(['Land', 'Vecka_Sort']).drop(columns=['Vecka_Sort'])
                         
                         st.dataframe(df_table_w, use_container_width=True, hide_index=True)
-                        else:
-                            st.warning("Välj minst en vecka i listan för att generera analysen.")
                     else:
-                        st.warning("Inga veckonummer hittades i den uppladdade filen.")
+                        st.warning("Välj minst en vecka i listan för att generera analysen.")
+                else:
+                    st.warning("Inga veckonummer hittades i den uppladdade filen.")
             else:
                 st.error("Kunde inte hitta landskolumnen i marknadsföringsfilen.")
 else:
