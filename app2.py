@@ -336,7 +336,7 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
                             df_table_w = df_w_stats.rename(columns={
                                 country_col: 'Land', 'Week_Num': 'Vecka', 'Spend_Val': 'Budget spent', 'GMV_Val': 'GMV',
                                 'Impressions_Val': 'Impressions', 'Clicks_Val': 'Clicks'
-                            })[['Land', 'Vecka', 'Budget spent', 'Impressions', 'Clicks', 'ROAS']]
+                            })[['Land', 'Vecka', 'Budget spent', 'GMV', 'Impressions', 'Clicks', 'ROAS']]
                         
                             df_table_w['Vecka_Sort'] = pd.Categorical(df_table_w['Vecka'], categories=selected_weeks, ordered=True)
                             df_table_w = df_table_w.sort_values(['Land', 'Vecka_Sort']).drop(columns=['Vecka_Sort'])
