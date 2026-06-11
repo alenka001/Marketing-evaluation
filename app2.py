@@ -253,14 +253,11 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
                 st.download_button("📥 Download Country Data", df_country_summary.to_csv(index=False).encode('utf-8'), "country_clusters.csv")
 
         with tab5:
-            st.header("📈 Landsjämförelse & Trendanalys")
+        st.header("📈 Landsjämförelse & Trendanalys")
         
-            if country_col:
-                # Filtrera rådatan baserat på dina valda länder i sidebaren
-                df_comp_raw = df_m_raw[df_m_raw[country_col].isin(selected_countries)]
-            
-                # Väljare för tidsram
-                comp_type = st.radio("Välj tidsram för jämförelse:", ["Månad över Månad (MoM)", "Vecka för Vecka (Trend upp till 3 veckor)"])
+        if country_col:
+            df_comp_raw = df_m_raw[df_m_raw[country_col].isin(selected_countries)]
+            comp_type = st.radio("Välj tidsram för jämförelse:", ["Månad över Månad (MoM)", "Vecka för Vecka (Trend upp till 3 veckor)"])
             
             if comp_type == "Månad över Månad (MoM)":
                 months = sorted(df_comp_raw['Month_Num'].unique())
@@ -290,21 +287,19 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
                                      labels={plot_map[metric_to_plot]: metric_to_plot, country_col: "Land"})
                         st.plotly_chart(fig, use_container_width=True)
                         
-                        # --- NY TABELL UNDER GRAFEN (MÅNAD) ---
                         st.subheader("📊 Sammanställning per marknad (Månadsvis)")
                         df_table_m = df_m_stats.rename(columns={
                             country_col: 'Land', 'Month_Num': 'Månad', 'Spend_Val': 'Budget spent', 
                             'Impressions_Val': 'Impressions', 'Clicks_Val': 'Clicks'
                         })[['Land', 'Månad', 'Budget spent', 'Impressions', 'Clicks', 'ROAS']]
                         
-                        # Snygg formatering av heltal i tabellen
                         st.dataframe(df_table_m.sort_values(['Land', 'Månad']), use_container_width=True, hide_index=True)
                     else:
                         st.warning("Ingen föregående månad hittades i datan.")
                 else:
                     st.warning("Datan behöver innehålla minst två olika månader för MoM.")
                     
-            else: # --- VECKA FÖR VECKA (3 VECKOR) ---
+            else:
                 weeks = sorted(df_comp_raw['Week_Num'].unique())
                 if len(weeks) >= 1:
                     selected_weeks = st.multiselect(
@@ -329,7 +324,6 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
                         df_plot = df_w_stats.copy()
                         df_plot['Tidsperiod'] = df_plot['Week_Num'].apply(lambda x: f"Vecka {x}")
                         
-                        # Lås ordningen på staplarna till exakt den ordning användaren klickade i veckorna
                         df_plot['Tidsperiod'] = pd.Categorical(df_plot['Tidsperiod'], categories=[f"Vecka {w}" for w in selected_weeks], ordered=True)
                         df_plot = df_plot.sort_values('Tidsperiod')
                         
@@ -338,14 +332,12 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
                                      labels={plot_map[metric_to_plot]: metric_to_plot, country_col: "Land"})
                         st.plotly_chart(fig, use_container_width=True)
                         
-                        # --- NY TABELL UNDER GRAFEN (VECKA) ---
                         st.subheader("📊 Sammanställning per marknad (Veckovis)")
                         df_table_w = df_w_stats.rename(columns={
                             country_col: 'Land', 'Week_Num': 'Vecka', 'Spend_Val': 'Budget spent', 
                             'Impressions_Val': 'Impressions', 'Clicks_Val': 'Clicks'
                         })[['Land', 'Vecka', 'Budget spent', 'Impressions', 'Clicks', 'ROAS']]
                         
-                        # Sortera tabellens rader baserat på vald veckoordning
                         df_table_w['Vecka_Sort'] = pd.Categorical(df_table_w['Vecka'], categories=selected_weeks, ordered=True)
                         df_table_w = df_table_w.sort_values(['Land', 'Vecka_Sort']).drop(columns=['Vecka_Sort'])
                         
