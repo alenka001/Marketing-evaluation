@@ -253,14 +253,14 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
                 st.download_button("📥 Download Country Data", df_country_summary.to_csv(index=False).encode('utf-8'), "country_clusters.csv")
 
         with tab5:
-        st.header("📈 Landsjämförelse & Trendanalys")
+            st.header("📈 Landsjämförelse & Trendanalys")
         
-        if country_col:
-            # Filtrera rådatan baserat på dina valda länder i sidebaren
-            df_comp_raw = df_m_raw[df_m_raw[country_col].isin(selected_countries)]
+            if country_col:
+                # Filtrera rådatan baserat på dina valda länder i sidebaren
+                df_comp_raw = df_m_raw[df_m_raw[country_col].isin(selected_countries)]
             
-            # Väljare för tidsram
-            comp_type = st.radio("Välj tidsram för jämförelse:", ["Månad över Månad (MoM)", "Vecka för Vecka (Trend upp till 3 veckor)"])
+                # Väljare för tidsram
+                comp_type = st.radio("Välj tidsram för jämförelse:", ["Månad över Månad (MoM)", "Vecka för Vecka (Trend upp till 3 veckor)"])
             
             if comp_type == "Månad över Månad (MoM)":
                 months = sorted(df_comp_raw['Month_Num'].unique())
