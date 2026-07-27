@@ -151,9 +151,16 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
             # --- Säsongsfilter (Kolumn I i lagerfilen) ---
             st.divider()
             st.header("🍂 Säsongsfilter")
-            # Förbereder säsongskolumnen från lagerfilen (index 8 är Kolumn I)
-            df_s_raw['Season'] = df_s_raw.iloc[:, 8].astype(str).str.strip()
-            all_seasons = sorted([s for s in df_s_raw['Season'].unique() if s and s.lower() != 'nan'])
+            
+            # 1. Konvertera kolumn I (index 8) till strängar och fyll i tomma värden säkert
+            df_s_raw['Season'] = df_s_raw.iloc[:, 8].fillna('').astype(str).str.strip()
+            
+            # 2. Hämta unika säsonger och filtrera bort ogiltiga värden säkert
+            all_seasons = sorted([
+                s for s in df_s_raw['Season'].unique() 
+                if s and s.lower() not in ['nan', 'none', '']
+            ])
+            
             selected_seasons = st.multiselect(
                 "Välj säsonger att inkludera:",
                 options=all_seasons,
