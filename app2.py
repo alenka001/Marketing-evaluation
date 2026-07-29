@@ -147,17 +147,17 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
         # --- SIDEBAR UI ---
         with st.sidebar:
             st.divider()
-            st.header("🏆 TOP Tier Thresholds")
+            st.header("TOP Tier Thresholds")
             t_stock = st.number_input("Min Stock (TOP)", value=100)
             t_roas = st.number_input("Min ROAS (TOP)", value=10.0)
     
-            st.header("🥈 MEDIUM Tier Thresholds")
+            st.header("MEDIUM Tier Thresholds")
             m_stock = st.number_input("Min Stock (MED)", value=60)
             m_roas = st.number_input("Min ROAS (MED)", value=4.0)
             
             # --- Landsfilter ---
             st.divider()
-            st.header("🏳️‍🌈 Landsval")
+            st.header("Landsval")
             all_countries = sorted(df_m_raw[country_col].dropna().unique().tolist())
             selected_countries = st.multiselect(
                 "Inkludera/Exkludera marknader:",
@@ -168,12 +168,12 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
 
             # Sidomeny - Valfri fil för förra veckans synlighetsjämförelse
             st.divider()
-            st.header("👁️ Synlighetsjämförelse")
+            st.header("Synlighetsjämförelse")
             prev_vis_file = st.file_uploader("3. (Valfri) Förra veckans rapport", type="csv", help="Ladda upp förra veckans fil för att se om vidtagna åtgärder förbättrat synligheten.")
 
             # --- Kluster-val ---
             st.divider()
-            st.header("🌍 Kluster-selection")
+            st.header("Kluster-selection")
             all_clusters = sorted(df_m_raw['Cluster_Name'].unique().tolist())
             selected_clusters = st.multiselect(
                 "Aktiva kluster i dashboard:",
@@ -183,7 +183,7 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
 
             # --- Säsongsfilter (Kolumn I i lagerfilen) ---
             st.divider()
-            st.header("🍂 Säsongsfilter")
+            st.header("Säsongsfilter")
             
             # 1. Konvertera kolumn I (index 8) till strängar och fyll i tomma värden säkert
             df_s_raw['Season'] = df_s_raw.iloc[:, 8].fillna('').astype(str).str.strip()
@@ -239,17 +239,17 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
         # --- 4. TABS ---
         # ÄNDRA RADEN MED TABS TILL DETTA:
         tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-        "🚀 Kampanjfördelning", 
-        "🏷️ Varumärkesöversikt", 
-        "🔄 Sync Status", 
-        "🌍 Landsklustring", 
-        "📈 Landsjämförelse",
-        "👁️ Synlighetsanalys"
+        "Kampanjfördelning", 
+        "Varumärkesöversikt", 
+        "Sync Status", 
+        "Landsklustring", 
+        "Landsjämförelse",
+        "Synlighetsanalys"
         ])
 
         # --- TAB 1: KAMPANJHINKAR PER KLUSTER ---
         with tab1:
-            st.header(f"📊 Kampanjhinkar per Kluster (Vecka {latest_week})")
+            st.header(f"Kampanjhinkar per Kluster (Vecka {latest_week})")
             
             # Globala mätetal över valda filter
             m_agg_global = df_m_filtered.groupby('Article').agg({'GMV_Val':'sum', 'Spend_Val':'sum'}).reset_index()
@@ -266,7 +266,7 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
             else:
                 for cluster in selected_clusters:
                     # Skapa en fällbar meny (expander) för varje aktivt kluster
-                    with st.expander(f"📁 **Kampanjhinkar för {cluster}**", expanded=True):
+                    with st.expander(f"**Kampanjhinkar för {cluster}**", expanded=True):
                         # Filtrera data enbart för detta kluster
                         df_c_latest = df_m_latest[
                             (df_m_latest['Cluster_Name'] == cluster) & 
@@ -309,7 +309,7 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
                                 )
 
         with tab2:
-            st.header("🏷️ Varumärkesöversikt")
+            st.header("Varumärkesöversikt")
             df_m_agg_brand = df_m_filtered.groupby('Article').agg({'GMV_Val':'sum', 'Spend_Val':'sum', 'Sold_Val':'sum'}).reset_index()
             df_brand_merged = pd.merge(df_m_agg_brand, df_s_valid[['Article', 'brand']], on='Article', how='inner')
             brand_stats = df_brand_merged.groupby('brand').agg({'Spend_Val': 'sum', 'GMV_Val': 'sum', 'Sold_Val': 'sum'}).reset_index()
@@ -317,7 +317,7 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
             st.dataframe(brand_stats.sort_values('GMV_Val', ascending=False), use_container_width=True, hide_index=True)
 
         with tab3:
-            st.header("🔄 Sync Status & Clean-up")
+            st.header("Sync Status & Clean-up")
             col_d, col_m = st.columns(2)
             with col_d:
                 st.markdown("**Multi-Campaign Duplicates (Aktiv Spend)**")
@@ -333,7 +333,7 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
                 st.dataframe(df_s_valid[(df_s_valid['Article'].isin(missing)) & (df_s_valid['Total_Stock'] > 10)][['Article', 'Total_Stock', 'Season']], use_container_width=True)
 
         with tab4:
-            st.header("🌍 Manuella Landskluster - Översikt")
+            st.header("Manuella Landskluster - Översikt")
             # Sammanställ prestanda per land utifrån hela den uppladdade marknadsföringsfilen
             df_c_summary = df_m_raw.groupby([country_col, 'Cluster_Name']).agg({
                 'Spend_Val': 'sum', 
@@ -346,10 +346,10 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
             df_c_summary['ROAS'] = (df_c_summary['GMV_Val'] / df_c_summary['Spend_Val'].replace(0, 1)).round(2)
             
             st.dataframe(df_c_summary.sort_values('Cluster_Name'), use_container_width=True, hide_index=True)
-            st.download_button("📥 Ladda ner Klusterdata CSV", df_c_summary.to_csv(index=False).encode('utf-8'), "manual_country_clusters.csv")
+            st.download_button("Ladda ner Klusterdata CSV", df_c_summary.to_csv(index=False).encode('utf-8'), "manual_country_clusters.csv")
 
         with tab5:
-            st.header("📈 Landsjämförelse & Trendanalys")
+            st.header("Landsjämförelse & Trendanalys")
             if country_col:
                 df_comp_raw = df_m_raw[df_m_raw[country_col].isin(selected_countries)]
                 comp_type = st.radio("Välj tidsram för jämförelse:", ["Månad över Månad (MoM)", "Vecka för Vecka (Trend upp till 3 veckor)"])
@@ -382,7 +382,7 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
                                          labels={plot_map[metric_to_plot]: metric_to_plot, country_col: "Land"})
                             st.plotly_chart(fig, use_container_width=True)
                             
-                            st.subheader("📊 Sammanställning per marknad (Månadsvis)")
+                            st.subheader("Sammanställning per marknad (Månadsvis)")
                             df_table_m = df_m_stats.rename(columns={
                                 country_col: 'Land', 
                                 'Month_Num': 'Månad', 
@@ -431,7 +431,7 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
                                          labels={plot_map[metric_to_plot]: metric_to_plot, country_col: "Land"})
                             st.plotly_chart(fig, use_container_width=True)
                             
-                            st.subheader("📊 Sammanställning per marknad (Veckovis)")
+                            st.subheader("Sammanställning per marknad (Veckovis)")
                             df_table_w = df_w_stats.rename(columns={
                                 country_col: 'Land', 
                                 'Week_Num': 'Vecka', 
@@ -557,7 +557,7 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
                         if resolved:
                             df_vis_summary = pd.concat([df_vis_summary, pd.DataFrame(resolved)], ignore_index=True)
                 else:
-                    df_vis_summary['Status / Trend'] = "ℹ️ Ingen jämförelsefil uppladdad"
+                    df_vis_summary['Status / Trend'] = "Ingen jämförelsefil uppladdad"
 
                 # 5. Visa Resultat
                 st.subheader(f"📊 Sammanfattning av Synlighet ({source_name})")
@@ -572,7 +572,7 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
 
                 st.divider()
 
-                st.subheader("📋 Detaljerad Synlighetslista per Artikel")
+                st.subheader("Detaljerad Synlighetslista per Artikel")
                 cols_to_show = ['Article']
                 if 'article_name' in df_vis_summary.columns:
                     cols_to_show.append('article_name')
@@ -587,11 +587,11 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
                 )
 
                 st.download_button(
-                    "📥 Ladda ner Synlighetsrapport (CSV)",
+                    "Ladda ner Synlighetsrapport (CSV)",
                     df_vis_summary[cols_to_show].to_csv(index=False).encode('utf-8'),
                     "visibility_analysis.csv"
                 )
             else:
                 st.error("Kunde inte hitta kolumnen 'visibility' (Kolumn V) i den uppladdade filen. Kontrollera att filen du laddat upp innehåller synlighetsdata.")
 else:
-    st.info("👋 Everything is ready. Just upload your SKU Report and Inventory file to begin.")
+    st.info("Everything is ready. Just upload your SKU Report and Inventory file to begin.")
