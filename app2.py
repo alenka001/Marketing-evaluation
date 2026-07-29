@@ -429,80 +429,93 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
             st.header("👁️ Synlighetsanalys per Artikel & Marknad")
             st.markdown("Översikt över artiklar drabbade av **låg synlighet** (`low_visibility`) och uppföljning av vidtagna åtgärder.")
 
-            # Identifiera kolumner för synlighet och marknad
-            vis_col = next((c for c in df_m_raw.columns if 'visibility' in c.lower() and 'reason' not in c.lower()), None)
-            reason_col = next((c for c in df_m_raw.columns if 'low_visibility_reason' in c.lower()), None)
+            # 1. Säkerställ detektion av Visibility-kolumnen (Söker namn, annars index 21 / Kolumn V)
+            vis_col = next((c for c in df_m_raw.columns if 'visibility' in str(c).lower() and 'reason' not in str(c).lower()), None)
+            if not vis_col and len(df_m_raw.columns) > 21:
+                vis_col = df_m_raw.columns[21]  # Kolumn V
 
-            if vis_col and country_col:
-                # 1. Filtrera innevarande veckas data för låg synlighet
-                df_low_curr = df_m_raw[df_m_raw[vis_col] == 'low_visibility'].copy()
+            # 2. Säkerställ detektion av Low Visibility Reason-kolumnen (Söker namn, annars index 22 / Kolumn W)
+            reason_col = next((c for c in df_m_raw.columns if 'low_visibility_reason' in str(c).lower()), None)
+            if not reason_col and len(df_m_raw.columns) > 22:
+                reason_col = df_m_raw.columns[22]  # Kolumn W
+
+            # 3. Säkerställ detektion av Landskolumnen (country_col eller index 14 / Kolumn O)
+            active_country_col = country_col
+            if not active_country_col and len(df_m_raw.columns) > 14:
+                active_country_col = df_m_raw.columns[14]  # Kolumn O
+
+            if vis_col and active_country_col:
+                # Tvätta visibility-värdena så att jämförelsen blir exakt
+                df_m_raw['clean_vis'] = df_m_raw[vis_col].astype(str).str.strip().str.lower()
+                df_low_curr = df_m_raw[df_m_raw['clean_vis'] == 'low_visibility'].copy()
 
                 if df_low_curr.empty:
                     st.success("🎉 Inga artiklar har för närvarande låg synlighet!")
                 else:
                     # Gruppera per artikel för innevarande vecka
                     agg_dict = {
-                        country_col: lambda x: ", ".join(sorted(set(str(v).upper() for v in x if pd.notna(v) and str(v) != '-'))),
+                        active_country_col: lambda x: ", ".join(sorted(set(str(v).upper() for v in x if pd.notna(v) and str(v) != '-'))),
                         m_cols['SKU']: 'first'
                     }
                     if 'article_name' in df_m_raw.columns:
                         agg_dict['article_name'] = 'first'
-                    if reason_col:
-                        agg_dict[reason_col] = lambda x: ", ".join(sorted(set(str(v) for v in x if pd.notna(v))))
+                    if reason_col and reason_col in df_m_raw.columns:
+                        agg_dict[reason_col] = lambda x: ", ".join(sorted(set(str(v) for v in x if pd.notna(v) and str(v) != 'nan')))
 
                     df_vis_summary = df_low_curr.groupby('Article').agg(agg_dict).reset_index()
-                    df_vis_summary.rename(columns={country_col: 'Påverkade Marknader (Nu)'}, inplace=True)
+                    df_vis_summary.rename(columns={active_country_col: 'Påverkade Marknader (Nu)'}, inplace=True)
 
-                    # 2. Om förra veckans fil har laddats upp -> Utför jämförelsen
+                    # 4. Om förra veckans fil har laddats upp -> Utför jämförelsen
                     if prev_vis_file is not None:
                         df_m_prev = load_csv(prev_vis_file)
                         df_m_prev['Article'] = df_m_prev[m_cols['SKU']].apply(standardize_sku)
                         
-                        # Filtrera förra veckans låga synlighet
-                        df_low_prev = df_m_prev[df_m_prev[vis_col] == 'low_visibility'].copy()
-                        
-                        # Gruppera per artikel för förra veckan
-                        prev_countries = df_low_prev.groupby('Article')[country_col].apply(
-                            lambda x: set(str(v).upper() for v in x if pd.notna(v) and str(v) != '-')
-                        ).to_dict()
+                        prev_vis_col = next((c for c in df_m_prev.columns if 'visibility' in str(c).lower() and 'reason' not in str(c).lower()), None)
+                        if not prev_vis_col and len(df_m_prev.columns) > 21:
+                            prev_vis_col = df_m_prev.columns[21]
 
-                        # Funktion för att bestämma statusindikator
-                        def calculate_status(row):
-                            article = row['Article']
-                            curr_countries_set = set(row['Påverkade Marknader (Nu)'].split(", ")) if row['Påverkade Marknader (Nu)'] else set()
+                        if prev_vis_col:
+                            df_m_prev['clean_vis'] = df_m_prev[prev_vis_col].astype(str).str.strip().str.lower()
+                            df_low_prev = df_m_prev[df_m_prev['clean_vis'] == 'low_visibility'].copy()
                             
-                            if article in prev_countries:
-                                prev_countries_set = prev_countries[article]
-                                # Om länderna förra veckan inte längre är påverkade i samma utsträckning (minst ett land har förbättrats)
-                                recovered = prev_countries_set - curr_countries_set
-                                if recovered:
-                                    return f"🟢 Förbättrad (Löst i: {', '.join(sorted(recovered))})"
+                            prev_countries = df_low_prev.groupby('Article')[active_country_col].apply(
+                                lambda x: set(str(v).upper() for v in x if pd.notna(v) and str(v) != '-')
+                            ).to_dict()
+
+                            def calculate_status(row):
+                                article = row['Article']
+                                curr_countries_set = set(row['Påverkade Marknader (Nu)'].split(", ")) if row['Påverkade Marknader (Nu)'] else set()
+                                
+                                if article in prev_countries:
+                                    prev_countries_set = prev_countries[article]
+                                    recovered = prev_countries_set - curr_countries_set
+                                    if recovered:
+                                        return f"🟢 Förbättrad (Löst i: {', '.join(sorted(recovered))})"
+                                    else:
+                                        return "🔴 Oförändrad (Ingen förbättring)"
                                 else:
-                                    return "🔴 Oförändrad (Ingen förbättring)"
-                            else:
-                                return "🟡 Ny drabbad artikel"
+                                    return "🟡 Ny drabbad artikel"
 
-                        df_vis_summary['Status / Trend'] = df_vis_summary.apply(calculate_status, axis=1)
-                        
-                        # Identifiera artiklar som HELT har lämnat låg synlighet (fanns förra veckan men inte alls denna vecka)
-                        curr_articles = set(df_vis_summary['Article'])
-                        resolved_articles = []
-                        for art, prev_set in prev_countries.items():
-                            if art not in curr_articles and prev_set:
-                                resolved_articles.append({
-                                    'Article': art,
-                                    'Påverkade Marknader (Nu)': "Inga (Helt återställd)",
-                                    'Status / Trend': f"🟢 Helt Återställd (Löst i: {', '.join(sorted(prev_set))})"
-                                })
-                        
-                        if resolved_articles:
-                            df_resolved = pd.DataFrame(resolved_articles)
-                            df_vis_summary = pd.concat([df_vis_summary, df_resolved], ignore_index=True)
-
+                            df_vis_summary['Status / Trend'] = df_vis_summary.apply(calculate_status, axis=1)
+                            
+                            # Hantera artiklar som helt lösts
+                            curr_articles = set(df_vis_summary['Article'])
+                            resolved_articles = []
+                            for art, prev_set in prev_countries.items():
+                                if art not in curr_articles and prev_set:
+                                    resolved_articles.append({
+                                        'Article': art,
+                                        'Påverkade Marknader (Nu)': "Inga (Helt återställd)",
+                                        'Status / Trend': f"🟢 Helt Återställd (Löst i: {', '.join(sorted(prev_set))})"
+                                    })
+                            
+                            if resolved_articles:
+                                df_resolved = pd.DataFrame(resolved_articles)
+                                df_vis_summary = pd.concat([df_vis_summary, df_resolved], ignore_index=True)
                     else:
                         df_vis_summary['Status / Trend'] = "ℹ️ Ingen jämförelsefil uppladdad"
 
-                    # 3. Visa KPI-kort
+                    # 5. Visa KPI-kort
                     st.subheader("📊 Sammanfattning av Synlighet")
                     kpi1, kpi2, kpi3 = st.columns(3)
                     kpi1.metric("Artiklar med Låg Synlighet (Nu)", len(df_low_curr['Article'].unique()))
@@ -515,10 +528,8 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
 
                     st.divider()
 
-                    # 4. Visa Tabellen
+                    # 6. Visa Tabellen
                     st.subheader("📋 Detaljerad Synlighetslista per Artikel")
-                    
-                    # Ordna kolumnerna snyggt
                     cols_to_show = ['Article']
                     if 'article_name' in df_vis_summary.columns:
                         cols_to_show.append('article_name')
@@ -532,13 +543,12 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
                         hide_index=True
                     )
 
-                    # Exportknapp
                     st.download_button(
                         "📥 Ladda ner Synlighetsrapport (CSV)",
                         df_vis_summary[cols_to_show].to_csv(index=False).encode('utf-8'),
                         "visibility_analysis.csv"
                     )
             else:
-                st.error("Kunde inte hitta kolumnerna för 'visibility' eller 'country' i filen.")
+                st.error("Kunde inte hitta kolumnerna för synlighet eller land i filen.")
 else:
     st.info("👋 Everything is ready. Just upload your SKU Report and Inventory file to begin.")
