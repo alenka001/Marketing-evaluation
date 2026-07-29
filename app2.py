@@ -426,7 +426,7 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
 
 # --- TAB 6: SYNLIGHETSANALYS (VISIBILITY) ---
         with tab6:
-            st.header("👁️ Synlighetsanalys per Artikel & Marknad")
+            st.header("Synlighetsanalys per Artikel & Marknad")
             st.markdown("Översikt över artiklar drabbade av **låg synlighet** (`low_visibility`) och uppföljning av vidtagna åtgärder.")
 
             # Bestäm vilken dataframe som innehåller synlighetsdatan
