@@ -39,8 +39,9 @@ def standardize_sku(sku):
             return f"{parts[0]}-{parts[1][:3]}"
     return s
 
+@st.cache_data(show_spinner=False)
 def load_csv(file):
-    """Läser in CSV-fil med automatisk detektering av teckenkodning och avgränsare."""
+    """Läser in CSV-fil minnessnålt med cachenätverk."""
     if file is None: return None
     raw_data = file.read(40000)
     file.seek(0)
@@ -48,7 +49,35 @@ def load_csv(file):
     except: sample = raw_data.decode('latin-1')
     sep = ';' if ';' in sample else ','
     file.seek(0)
-    return pd.read_csv(file, sep=sep, encoding='utf-8' if 'utf-8' in sample else 'latin-1')
+    
+    # Läs in filen med low_memory=False för stabilitet
+    df = pd.read_csv(file, sep=sep, encoding='utf-8' if 'utf-8' in sample else 'latin-1', low_memory=False)
+    return optimize_memory(df)
+
+def optimize_memory(df):
+    """Reducerar RAM-förbrukning med upp till 70% genom att optimera datatyper."""
+    for col in df.columns:
+        col_type = df[col].dtype
+        if col_type != object:
+            c_min = df[col].min()
+            c_max = df[col].max()
+            if str(col_type).startswith('int'):
+                if c_min > np.iinfo(np.int8).min and c_max < np.iinfo(np.int8).max:
+                    df[col] = df[col].astype(np.int8)
+                elif c_min > np.iinfo(np.int16).min and c_max < np.iinfo(np.int16).max:
+                    df[col] = df[col].astype(np.int16)
+                elif c_min > np.iinfo(np.int32).min and c_max < np.iinfo(np.int32).max:
+                    df[col] = df[col].astype(np.int32)
+            else:
+                if c_min > np.finfo(np.float32).min and c_max < np.finfo(np.float32).max:
+                    df[col] = df[col].astype(np.float32)
+        else:
+            # Konvertera textkolumner med få unika värden till kategorier (sparar enormt med RAM)
+            num_unique = len(df[col].unique())
+            num_total = len(df[col])
+            if num_total > 0 and (num_unique / num_total) < 0.5:
+                df[col] = df[col].astype('category')
+    return df
 
 # --- 2. MANUELL KLUSTER-MAPPING ---
 # Här definieras ländernas tillhörighet manuellt utifrån din strategi
@@ -428,6 +457,10 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
         with tab6:
             st.header("Synlighetsanalys per Artikel & Marknad")
             st.markdown("Översikt över artiklar drabbade av **låg synlighet** (`low_visibility`) och uppföljning av vidtagna åtgärder.")
+
+            # Hämta endast de relevanta kolumnerna för att spara minne
+            vis_cols_needed = [c for c in df_m_raw.columns if any(x in str(c).lower() for x in ['visibility', 'country', 'target', 'partner_article', 'sku', 'article_name', 'low_visibility_reason'])]
+            df_m_vis_light = df_m_raw[vis_cols_needed].copy()
 
             # Bestäm vilken dataframe som innehåller synlighetsdatan
             # Kollar först i huvudfilen (df_m_raw), därefter i jämförelsefilen (prev_vis_file)
