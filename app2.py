@@ -39,21 +39,6 @@ def standardize_sku(sku):
             return f"{parts[0]}-{parts[1][:3]}"
     return s
 
-@st.cache_data(show_spinner=False)
-def load_csv(file):
-    """Läser in CSV-fil minnessnålt med cachenätverk."""
-    if file is None: return None
-    raw_data = file.read(40000)
-    file.seek(0)
-    try: sample = raw_data.decode('utf-8')
-    except: sample = raw_data.decode('latin-1')
-    sep = ';' if ';' in sample else ','
-    file.seek(0)
-    
-    # Läs in filen med low_memory=False för stabilitet
-    df = pd.read_csv(file, sep=sep, encoding='utf-8' if 'utf-8' in sample else 'latin-1', low_memory=False)
-    return optimize_memory(df)
-
 def optimize_memory(df):
     """Reducerar RAM-förbrukning med upp till 70% genom att optimera datatyper."""
     for col in df.columns:
@@ -78,6 +63,20 @@ def optimize_memory(df):
             if num_total > 0 and (num_unique / num_total) < 0.5:
                 df[col] = df[col].astype('category')
     return df
+
+@st.cache_data(show_spinner=False)
+def load_csv(file):
+    """Läser in CSV-fil minnessnålt med cachenätverk."""
+    if file is None: return None
+    raw_data = file.read(40000)
+    file.seek(0)
+    try: sample = raw_data.decode('utf-8')
+    except: sample = raw_data.decode('latin-1')
+    sep = ';' if ';' in sample else ','
+    file.seek(0)
+    
+    df = pd.read_csv(file, sep=sep, encoding='utf-8' if 'utf-8' in sample else 'latin-1', low_memory=False)
+    return optimize_memory(df)
 
 # --- 2. MANUELL KLUSTER-MAPPING ---
 # Här definieras ländernas tillhörighet manuellt utifrån din strategi
