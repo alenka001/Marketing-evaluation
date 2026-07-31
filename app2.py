@@ -474,10 +474,10 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
             else:
                 st.error("Kunde inte hitta landskolumnen i marknadsföringsfilen.")
 
-# --- TAB 6: SYNLIGHETSANALYS (VISIBILITY) ---
+# --- TAB 6: SYNLIGHETSANALYS (VISIBILITY - VARIANT NIVÅ) ---
         with tab6:
-            st.header("👁️ Synlighetsanalys per Artikel & Marknad")
-            st.markdown("Jämför två synlighetsrapporter för att följa upp om vidtagna åtgärder har förbättrat artiklarnas synlighet.")
+            st.header("👁️ Synlighetsanalys per Variant (Färg) & Marknad")
+            st.markdown("Översikt på **variant-nivå (färg)** för artiklar drabbade av låg synlighet (`low_visibility`) samt uppföljning av förändringar.")
 
             if vis_file_curr is not None:
                 # 1. Läs in nuvarande synlighetsrapport
@@ -493,26 +493,34 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
                 c_col_c = next((c for c in df_curr_raw.columns if 'country' in str(c).lower() or 'target' in str(c).lower()), None)
                 if not c_col_c and len(df_curr_raw.columns) > 14: c_col_c = df_curr_raw.columns[14]
                 
-                s_col_c = next((c for c in df_curr_raw.columns if any(x in str(c).lower() for x in ['partner_article', 'sku', 'configsku', 'zalando_article'])), None)
+                # Hitta i första hand Variant-kolumnen (färg), i andra hand Modell/SKU
+                var_col_c = next((c for c in df_curr_raw.columns if any(x in str(c).lower() for x in ['partner_article_variant', 'zalando_article_variant', 'variant_sku'])), None)
+                sku_col_c = next((c for c in df_curr_raw.columns if any(x in str(c).lower() for x in ['partner_article', 'configsku', 'sku'])), None)
+                
+                if not var_col_c:
+                    var_col_c = sku_col_c if sku_col_c else df_curr_raw.columns[1]
 
                 # Filtrera low_visibility för nuvarande vecka
                 df_curr_raw['clean_vis'] = df_curr_raw[v_col_c].astype(str).str.strip().str.lower()
                 df_curr_low = df_curr_raw[df_curr_raw['clean_vis'].str.contains('low_visibility', na=False)].copy()
-                df_curr_low['Article'] = df_curr_low[s_col_c].apply(standardize_sku)
+                
+                # Skapa variant-identifierare och modell-SKU
+                df_curr_low['Variant_ID'] = df_curr_low[var_col_c].astype(str).str.strip().str.upper()
+                df_curr_low['Article'] = df_curr_low[sku_col_c].apply(standardize_sku) if sku_col_c else df_curr_low['Variant_ID']
 
-                # Gruppera nuvarande vecka per artikel
+                # Gruppera nuvarande vecka per VARIANT
                 agg_dict_curr = {
                     c_col_c: lambda x: ", ".join(sorted(set(str(v).upper() for v in x if pd.notna(v) and str(v) != '-'))),
-                    s_col_c: 'first'
+                    'Article': 'first'
                 }
                 if 'article_name' in df_curr_raw.columns: agg_dict_curr['article_name'] = 'first'
                 if r_col_c and r_col_c in df_curr_raw.columns:
                     agg_dict_curr[r_col_c] = lambda x: ", ".join(sorted(set(str(v) for v in x if pd.notna(v) and str(v).lower() != 'nan')))
 
-                df_curr_summary = df_curr_low.groupby('Article').agg(agg_dict_curr).reset_index()
+                df_curr_summary = df_curr_low.groupby('Variant_ID').agg(agg_dict_curr).reset_index()
                 df_curr_summary.rename(columns={c_col_c: 'Påverkade Marknader (Nu)'}, inplace=True)
 
-                # 2. Om en föregående rapport har laddats upp -> Utför jämförelsen
+                # 2. Om en föregående rapport har laddats upp -> Utför jämförelsen per VARIANT
                 if vis_file_prev is not None:
                     df_prev_raw = load_csv(vis_file_prev)
                     
@@ -522,31 +530,32 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
                     c_col_p = next((c for c in df_prev_raw.columns if 'country' in str(c).lower() or 'target' in str(c).lower()), None)
                     if not c_col_p and len(df_prev_raw.columns) > 14: c_col_p = df_prev_raw.columns[14]
                     
-                    s_col_p = next((c for c in df_prev_raw.columns if any(x in str(c).lower() for x in ['partner_article', 'sku', 'configsku', 'zalando_article'])), None)
+                    var_col_p = next((c for c in df_prev_raw.columns if any(x in str(c).lower() for x in ['partner_article_variant', 'zalando_article_variant', 'variant_sku'])), None)
+                    if not var_col_p: var_col_p = var_col_c
 
-                    df_prev_raw['Article'] = df_prev_raw[s_col_p].apply(standardize_sku)
+                    df_prev_raw['Variant_ID'] = df_prev_raw[var_col_p].astype(str).str.strip().str.upper()
                     df_prev_raw['clean_vis'] = df_prev_raw[v_col_p].astype(str).str.strip().str.lower()
                     df_prev_low = df_prev_raw[df_prev_raw['clean_vis'].str.contains('low_visibility', na=False)].copy()
 
-                    # Ordbok med länder per artikel från föregående rapport
-                    prev_countries = df_prev_low.groupby('Article')[c_col_p].apply(
+                    # Ordbok med länder per VARIANT från föregående rapport
+                    prev_countries = df_prev_low.groupby('Variant_ID')[c_col_p].apply(
                         lambda x: set(str(v).upper() for v in x if pd.notna(v) and str(v) != '-')
                     ).to_dict()
 
-                    # Beräkna förbättrade vs påverkade
+                    # Beräkna förbättrade vs påverkade varianter
                     improved_list = []
                     still_affected_list = []
 
-                    # Kolla nuvarande artiklar
+                    # Kolla nuvarande varianter
                     for _, row in df_curr_summary.iterrows():
-                        article = row['Article']
+                        variant = row['Variant_ID']
                         curr_set = set(row['Påverkade Marknader (Nu)'].split(", ")) if row['Påverkade Marknader (Nu)'] else set()
                         
-                        if article in prev_countries:
-                            prev_set = prev_countries[article]
+                        if variant in prev_countries:
+                            prev_set = prev_countries[variant]
                             recovered = prev_set - curr_set
                             
-                            if recovered: # Delvis förbättrad
+                            if recovered: # Delvis förbättrad variant
                                 row_imp = row.to_dict()
                                 row_imp['Förbättring'] = f"🟢 Löst i: {', '.join(sorted(recovered))}"
                                 improved_list.append(row_imp)
@@ -556,15 +565,16 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
                             still_affected_list.append(row_aff)
                         else:
                             row_aff = row.to_dict()
-                            row_aff['Status'] = "🟡 Ny drabbad artikel"
+                            row_aff['Status'] = "🟡 Ny drabbad variant"
                             still_affected_list.append(row_aff)
 
-                    # Kolla artiklar från förra veckan som är HELT återställda
-                    curr_articles_set = set(df_curr_summary['Article'])
-                    for art, prev_set in prev_countries.items():
-                        if art not in curr_articles_set and prev_set:
+                    # Kolla varianter från förra veckan som är HELT återställda
+                    curr_variants_set = set(df_curr_summary['Variant_ID'])
+                    for var_id, prev_set in prev_countries.items():
+                        if var_id not in curr_variants_set and prev_set:
                             improved_list.append({
-                                'Article': art,
+                                'Variant_ID': var_id,
+                                'Article': standardize_sku(var_id),
                                 'Påverkade Marknader (Nu)': "Inga (Helt återställd)",
                                 'Förbättring': f"🟢 Helt Återställd (Löst i: {', '.join(sorted(prev_set))})"
                             })
@@ -574,53 +584,53 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
 
                     # KPI-kort
                     kpi1, kpi2, kpi3 = st.columns(3)
-                    kpi1.metric("Förbättrade / Återställda Artiklar", len(df_improved))
-                    kpi2.metric("Fortfarande Påverkade Artiklar", len(df_still_affected))
-                    kpi3.metric("Nya Drabbade Artiklar", len([x for x in still_affected_list if x.get('Status') == "🟡 Ny drabbad artikel"]))
+                    kpi1.metric("Förbättrade / Återställda Varianter", len(df_improved))
+                    kpi2.metric("Fortfarande Påverkade Varianter", len(df_still_affected))
+                    kpi3.metric("Nya Drabbade Varianter", len([x for x in still_affected_list if x.get('Status') == "🟡 Ny drabbad variant"]))
                     st.divider()
 
-                    # Skapa undertabbar för strukturerad visning
-                    sub_tab1, sub_tab2 = st.tabs(["🟢 Detaljerad Lista: Förbättrade Artiklar", "🔴 Detaljerad Lista: Fortfarande Påverkade"])
+                    # Undertabbar för strukturerad visning
+                    sub_tab1, sub_tab2 = st.tabs(["🟢 Detaljerad Lista: Förbättrade Varianter", "🔴 Detaljerad Lista: Fortfarande Påverkade Varianter"])
 
                     with sub_tab1:
-                        st.subheader("🟢 Artiklar med Förbättrad Synlighet")
+                        st.subheader("🟢 Varianter med Förbättrad Synlighet")
                         if not df_improved.empty:
-                            cols_imp = ['Article']
+                            cols_imp = ['Variant_ID', 'Article']
                             if 'article_name' in df_improved.columns: cols_imp.append('article_name')
                             cols_imp.extend(['Påverkade Marknader (Nu)', 'Förbättring'])
                             
                             st.dataframe(df_improved[cols_imp], use_container_width=True, hide_index=True)
                             st.download_button(
-                                "📥 Ladda ner Förbättrade Artiklar (CSV)",
+                                "📥 Ladda ner Förbättrade Varianter (CSV)",
                                 df_improved[cols_imp].to_csv(index=False).encode('utf-8'),
-                                "improved_visibility.csv"
+                                "improved_variants_visibility.csv"
                             )
                         else:
-                            st.info("Inga artiklar har uppvisat förbättrad synlighet sedan förra rapporten.")
+                            st.info("Inga varianter har uppvisat förbättrad synlighet sedan förra rapporten.")
 
                     with sub_tab2:
-                        st.subheader("🔴 Artiklar som fortfarande har Låg Synlighet")
+                        st.subheader("🔴 Varianter som fortfarande har Låg Synlighet")
                         if not df_still_affected.empty:
-                            cols_aff = ['Article']
+                            cols_aff = ['Variant_ID', 'Article']
                             if 'article_name' in df_still_affected.columns: cols_aff.append('article_name')
                             cols_aff.extend(['Påverkade Marknader (Nu)', 'Status'])
                             if r_col_c and r_col_c in df_still_affected.columns: cols_aff.append(r_col_c)
 
                             st.dataframe(df_still_affected[cols_aff], use_container_width=True, hide_index=True)
                             st.download_button(
-                                "📥 Ladda ner Påverkade Artiklar (CSV)",
+                                "📥 Ladda ner Påverkade Varianter (CSV)",
                                 df_still_affected[cols_aff].to_csv(index=False).encode('utf-8'),
-                                "still_affected_visibility.csv"
+                                "still_affected_variants_visibility.csv"
                             )
                         else:
-                            st.success("🎉 Inga artiklar är för närvarande drabbade!")
+                            st.success("🎉 Inga varianter är för närvarande drabbade!")
 
                 else:
                     # Endast en fil uppladdad
-                    st.info("💡 Ladda även upp en föregående rapport i sidebaren (Fält 4) för att se vilka artiklar som har förbättrats!")
-                    st.subheader("📋 Alla Artiklar med Låg Synlighet (Nuvarande rapport)")
+                    st.info("💡 Ladda även upp en föregående rapport i sidebaren (Fält 4) för att jämföra förändringar!")
+                    st.subheader("📋 Alla Varianter med Låg Synlighet (Nuvarande rapport)")
                     
-                    cols_aff = ['Article']
+                    cols_aff = ['Variant_ID', 'Article']
                     if 'article_name' in df_curr_summary.columns: cols_aff.append('article_name')
                     cols_aff.append('Påverkade Marknader (Nu)')
                     if r_col_c and r_col_c in df_curr_summary.columns: cols_aff.append(r_col_c)
@@ -629,9 +639,9 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
                     st.download_button(
                         "📥 Ladda ner Rapport (CSV)",
                         df_curr_summary[cols_aff].to_csv(index=False).encode('utf-8'),
-                        "visibility_current.csv"
+                        "variants_visibility_current.csv"
                     )
             else:
-                st.info("👋 Ladda upp din senast synlighetsfil i sidebaren under **'3. Synlighetsrapport - Nuvarande vecka'** för att starta analysen.")
+                st.info("👋 Ladda upp din senaste synlighetsfil i sidebaren under **'3. Synlighetsrapport - Nuvarande vecka'** för att starta analysen.")
 else:
     st.info("Everything is ready. Just upload your SKU Report and Inventory file to begin.")
