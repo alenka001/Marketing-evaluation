@@ -40,28 +40,41 @@ def standardize_sku(sku):
     return s
 
 def optimize_memory(df):
-    """Reducerar RAM-förbrukning med upp till 70% genom att optimera datatyper."""
+    """Reducerar RAM-förbrukning med upp till 70% genom att optimera datatyper på ett säkert sätt."""
     for col in df.columns:
-        col_type = df[col].dtype
-        if col_type != object:
-            c_min = df[col].min()
-            c_max = df[col].max()
-            if str(col_type).startswith('int'):
-                if c_min > np.iinfo(np.int8).min and c_max < np.iinfo(np.int8).max:
+        try:
+            col_type = df[col].dtype
+            
+            # 1. Hantera heltalskolumner (integers)
+            if pd.api.types.is_integer_dtype(col_type):
+                c_min = df[col].min()
+                c_max = df[col].max()
+                if c_min >= np.iinfo(np.int8).min and c_max <= np.iinfo(np.int8).max:
                     df[col] = df[col].astype(np.int8)
-                elif c_min > np.iinfo(np.int16).min and c_max < np.iinfo(np.int16).max:
+                elif c_min >= np.iinfo(np.int16).min and c_max <= np.iinfo(np.int16).max:
                     df[col] = df[col].astype(np.int16)
-                elif c_min > np.iinfo(np.int32).min and c_max < np.iinfo(np.int32).max:
+                elif c_min >= np.iinfo(np.int32).min and c_max <= np.iinfo(np.int32).max:
                     df[col] = df[col].astype(np.int32)
-            else:
-                if c_min > np.finfo(np.float32).min and c_max < np.finfo(np.float32).max:
-                    df[col] = df[col].astype(np.float32)
-        else:
-            # Konvertera textkolumner med få unika värden till kategorier (sparar enormt med RAM)
-            num_unique = len(df[col].unique())
-            num_total = len(df[col])
-            if num_total > 0 and (num_unique / num_total) < 0.5:
-                df[col] = df[col].astype('category')
+            
+            # 2. Hantera flyttalskolumner (floats) säkert
+            elif pd.api.types.is_float_dtype(col_type):
+                c_min = df[col].min()
+                c_max = df[col].max()
+                # Om min/max är giltiga tal (inte enbart NaN)
+                if pd.notna(c_min) and pd.notna(c_max):
+                    if c_min >= np.finfo(np.float32).min and c_max <= np.finfo(np.float32).max:
+                        df[col] = df[col].astype(np.float32)
+            
+            # 3. Konvertera textkolumner (objects) med få unika värden till kategorier
+            elif pd.api.types.is_object_dtype(col_type) or isinstance(col_type, pd.CategoricalDtype):
+                num_unique = len(df[col].unique())
+                num_total = len(df[col])
+                if num_total > 0 and (num_unique / num_total) < 0.5:
+                    df[col] = df[col].astype('category')
+        except Exception:
+            # Om en specifik kolumn misslyckas lämnar vi den orörd för att förhindra krasch
+            continue
+            
     return df
 
 @st.cache_data(show_spinner=False)
