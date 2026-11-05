@@ -4,7 +4,6 @@ import io
 import re
 import numpy as np
 
-# Vi använder plotly för snygga jämförelse-grafer
 try:
     import plotly.express as px
 except ImportError:
@@ -13,11 +12,10 @@ except ImportError:
 # --- Page Setup ---
 st.set_page_config(page_title="Zalando Marketing expert", layout="wide")
 st.title("Swedemount Expert: Global Performance & Sync")
-st.markdown("### Integrated: Cyber Week Kampagnen, Kluster, Season Filtering & Visibility")
+st.markdown("### Integrated: Cyber Week Kampanjer, Bereinigte Rest-Kampagnen & Kluster")
 
 # --- 1. UTILITIES ---
 def clean_numeric(series):
-    """Tvättar europeisk talformatering och konverterar till numeriska värden."""
     def fix_string(val):
         if pd.isna(val): return "0"
         val = str(val).strip()
@@ -31,7 +29,6 @@ def clean_numeric(series):
     return pd.to_numeric(s, errors='coerce').fillna(0)
 
 def standardize_sku(sku):
-    """Standardiserar SKU till Config-ID (13 tecken)."""
     s = str(sku).strip().upper().replace('.0', '')
     if '-' in s:
         parts = s.split('-')
@@ -40,27 +37,18 @@ def standardize_sku(sku):
     return s
 
 def map_gender(gender_val):
-    """
-    Klassifiziert Gender gemäß Black/Cyber Week Vorgaben:
-    - Damen -> Women
-    - Herren & Unisex -> Men
-    - Kinder, Kinder Mädchen, Kinder Jungen & Kinder Unisex -> Kids
-    """
     if pd.isna(gender_val):
         return 'Undefined'
     g = str(gender_val).strip().lower()
-    
     if 'damen' in g or g == 'women':
         return 'Women'
     elif 'kinder' in g or 'kids' in g or 'mädchen' in g or 'jungen' in g:
         return 'Kids'
     elif 'herren' in g or 'men' in g or 'unisex' in g:
-        # Vorgabe: Unisex wird Male/Men zugeordnet
         return 'Men'
     return 'Undefined'
 
 def optimize_memory(df):
-    """Reducerar RAM-förbrukning säkert genom att optimera datatyper."""
     for col in df.columns:
         try:
             col_type = df[col].dtype
@@ -90,7 +78,6 @@ def optimize_memory(df):
 
 @st.cache_data(show_spinner=False)
 def load_csv(file):
-    """Läser in CSV-fil minnessnålt med cachenätverk."""
     if file is None: return None
     raw_data = file.read(40000)
     file.seek(0)
@@ -98,11 +85,13 @@ def load_csv(file):
     except: sample = raw_data.decode('latin-1')
     sep = ';' if ';' in sample else ','
     file.seek(0)
-    
     df = pd.read_csv(file, sep=sep, encoding='utf-8' if 'utf-8' in sample else 'latin-1', low_memory=False)
     return optimize_memory(df)
 
-# --- 2. MANUELL KLUSTER-MAPPING ---
+# --- 2. MANUELL KLUSTER-MAPPING & CW KONSTANTEN ---
+CW_COUNTRIES = {'DE', 'CH', 'AT', 'DK', 'NL', 'IT', 'FR'}
+CW_BRANDS = {'swedemount', 'denim factory'}
+
 MANUAL_CLUSTER_MAPPING = {
     'IT': 'C1 (IT, FR, ES)', 'FR': 'C1 (IT, FR, ES)', 'ES': 'C1 (IT, FR, ES)',
     'DE': 'C2 (DE, NL, BE)', 'NL': 'C2 (DE, NL, BE)', 'BE': 'C2 (DE, NL, BE)',
@@ -139,8 +128,7 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
         }
         
         country_col = next((c for c in m_cols_list if 'country' in str(c).lower() or 'target' in str(c).lower()), None)
-        if not country_col and len(m_cols_list) > 7: 
-            country_col = m_cols_list[7]
+        if not country_col and len(m_cols_list) > 7: country_col = m_cols_list[7]
 
         # B. Grundtvätt av Marknadsföringsfil
         df_m_raw['Week_Num'] = clean_numeric(df_m_raw[m_cols['Week']]).astype(int)
@@ -152,11 +140,7 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
         df_m_raw['Clicks_Val'] = clean_numeric(df_m_raw[m_cols['Clicks']])
         df_m_raw['Impressions_Val'] = clean_numeric(df_m_raw[m_cols['Impressions']])
         df_m_raw['Target_Country'] = df_m_raw[country_col].astype(str).str.strip().str.upper()
-        
-        # Gender Mapping
         df_m_raw['Mapped_Gender'] = df_m_raw[m_cols['Gender']].apply(map_gender)
-
-        # C. Tilldela Manuella Kluster till Rådatan
         df_m_raw['Cluster_Name'] = df_m_raw['Target_Country'].map(MANUAL_CLUSTER_MAPPING).fillna('Övriga marknader')
 
         # --- SIDEBAR UI ---
@@ -170,25 +154,21 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
             m_stock = st.number_input("Min Stock (MED)", value=60)
             m_roas = st.number_input("Min ROAS (MED)", value=4.0)
             
-            # --- Landsfilter ---
             st.divider()
             st.header("🏳️‍🌈 Landsval")
             all_countries = sorted(df_m_raw['Target_Country'].dropna().unique().tolist())
             selected_countries = st.multiselect("Inkludera/Exkludera marknader:", options=all_countries, default=all_countries)
 
-            # --- Synlighetsfiler ---
             st.divider()
             st.header("👁️ Synlighetsjämförelse")
             vis_file_curr = st.file_uploader("3. Synlighetsrapport - Nuvarande vecka", type="csv")
             vis_file_prev = st.file_uploader("4. (Valfri) Synlighetsrapport - Föregående vecka", type="csv")
 
-            # --- Kluster-val ---
             st.divider()
             st.header("🌍 Kluster-selection")
             all_clusters = sorted(df_m_raw['Cluster_Name'].unique().tolist())
             selected_clusters = st.multiselect("Aktiva kluster i dashboard:", options=all_clusters, default=all_clusters)
 
-            # --- Säsongsfilter ---
             st.divider()
             st.header("🍂 Säsongsfilter")
             df_s_raw['Season'] = df_s_raw.iloc[:, 8].fillna('').astype(str).str.strip()
@@ -217,23 +197,15 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
         latest_week = max(available_weeks) if available_weeks else 0
         df_m_latest = df_m_raw[df_m_raw['Week_Num'] == latest_week].copy()
 
-        # Filter på valda länder och kluster
-        df_m_filtered = df_m_latest[
-            df_m_latest['Cluster_Name'].isin(selected_clusters) & 
-            df_m_latest['Target_Country'].isin(selected_countries)
-        ]
-
-        # Artikel-Brand-Mapping aus Inventory
+        # Brand Mapping & Gender Lock
         sku_to_brand = df_s_valid.set_index('Article')['brand'].to_dict()
         df_m_latest['Brand_Clean'] = df_m_latest['Article'].map(sku_to_brand).fillna('Other')
-        
-        # Sicherstellen, dass jeder Artikel ein eindeutiges Gender hat
         art_gender_lock = df_m_latest.groupby('Article')['Mapped_Gender'].agg(lambda x: x.mode()[0] if not x.empty else 'Men').to_dict()
 
-        # --- 4. TABS ---
+        # --- TABS ---
         tab_cw, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
             "🖤 Cyber Week Kampanjer",
-            "🚀 Kampanjfördelning", 
+            "🚀 Kampanjfördelning (Befintliga)", 
             "🏷️ Varumärkesöversikt", 
             "🔄 Sync Status", 
             "🌍 Landsklustring", 
@@ -242,25 +214,20 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
         ])
 
         # =========================================================================
-        # 🖤 TAB: CYBER WEEK KAMPANJER (Deduplizierung & Gender-Buckets)
+        # 🖤 TAB: CYBER WEEK KAMPANJER (27 DEDIZIERTE BUCKETS)
         # =========================================================================
         with tab_cw:
-            st.header("🖤 Cyber Week / Black Week Kampagnenverteilung")
+            st.header("🖤 Cyber Week / Black Week Kampagnen (Fokus DE, CH, AT, DK, NL, IT, FR)")
             st.markdown("""
-            **Kampagnenregeln:**
-            * Jeder Artikel erscheint **nur in maximal 1 Kampagne pro Land** (Keine Duplikate).
-            * Damen $\\rightarrow$ **Women**, Herren & Unisex $\\rightarrow$ **Men**, Kinder $\\rightarrow$ **Kids**.
-            * Swedemount & Denim Factory erhalten in den Zielländern dedizierte Kampagnen und werden aus generischen Tiers ausgeschlossen.
+            * **Fokus-Marken:** Swedemount & Denim Factory (exklusiv für diese 7 Länder).
+            * **Deduplizierung:** Ein Artikel existiert im jeweiligen Land nur in genau einem Women-, Men- oder Kids-Bucket.
             """)
             
-            # Relevante Artikel für CW (Swedemount & Denim Factory mit gültigem ZFS Lager)
             cw_stock_skus = set(df_s_valid['Article'])
             df_cw_pool = df_m_latest[df_m_latest['Article'].isin(cw_stock_skus)].copy()
             df_cw_pool['Final_Gender'] = df_cw_pool['Article'].map(art_gender_lock).fillna('Men')
             
-            # Liste aller 27 CW Kampagnen
             cw_campaigns_def = [
-                # Land, Marken, Gender, Kampagnenname
                 ('DE', ['Swedemount'], 'Women', 'CW Swedemount DE Women'),
                 ('DE', ['Swedemount'], 'Men', 'CW Swedemount DE Men'),
                 ('DE', ['Swedemount'], 'Kids', 'CW Swedemount DE Kids'),
@@ -296,71 +263,73 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
                 ('FR', ['Swedemount', 'Denim Factory'], 'Kids', 'CW Swedemount/Denim Factory FR Kids'),
             ]
             
-            # Gruppierung nach Ländern für saubere UI
             countries_cw = ['DE', 'CH', 'AT', 'DK', 'NL', 'IT', 'FR']
-            
-            # Schnelle Übersicht / KPIs
-            total_cw_assigned = 0
             cw_results = {}
+            total_cw_skus = 0
 
             for c_country, c_brands, c_gender, c_name in cw_campaigns_def:
-                # Exakte Zuweisung nach Land, Marke und Gender
-                # Marke muss passen (Groß-/Kleinschreibung ignorieren)
                 brand_filter = df_cw_pool['Brand_Clean'].str.lower().isin([b.lower() for b in c_brands])
                 country_filter = df_cw_pool['Target_Country'] == c_country
                 gender_filter = df_cw_pool['Final_Gender'] == c_gender
                 
-                matched_articles = df_cw_pool[brand_filter & country_filter & gender_filter]['Article'].unique().tolist()
-                cw_results[c_name] = matched_articles
-                total_cw_assigned += len(matched_articles)
+                matched = df_cw_pool[brand_filter & country_filter & gender_filter]['Article'].unique().tolist()
+                cw_results[c_name] = matched
+                total_cw_skus += len(matched)
 
             kpi_cw1, kpi_cw2, kpi_cw3 = st.columns(3)
-            kpi_cw1.metric("Aktive CW Kampagnen", len(cw_campaigns_def))
-            kpi_cw2.metric("Total zugewiesene Artikel (Länder-Duplikate ausgeschlossen)", total_cw_assigned)
+            kpi_cw1.metric("CW Kampagnen", len(cw_campaigns_def))
+            kpi_cw2.metric("Zugewiesene Artikel (Dedupliziert)", total_cw_skus)
             kpi_cw3.metric("Fokus-Länder", len(countries_cw))
             st.divider()
 
-            # Anzeige nach Ländern
             for country in countries_cw:
                 with st.expander(f"📍 **Cyber Week Kampagnen für {country}**", expanded=(country in ['DE', 'CH'])):
-                    # Finde alle Kampagnen für dieses Land
                     country_camps = [item for item in cw_campaigns_def if item[0] == country]
-                    
-                    # 3 Spalten pro Zeile
                     cols_cw = st.columns(len(country_camps))
                     for idx, (c_country, c_brands, c_gender, c_name) in enumerate(country_camps):
                         with cols_cw[idx]:
                             skus = cw_results.get(c_name, [])
                             st.markdown(f"**{c_name}**")
                             st.metric("Artikel", len(skus))
-                            st.text_area(
-                                "SKU-Liste", 
-                                ",".join(skus), 
-                                height=200, 
-                                key=f"txt_cw_{c_name}", 
-                                label_visibility="collapsed"
-                            )
+                            st.text_area("SKU-Liste", ",".join(skus), height=180, key=f"txt_cw_{c_name}", label_visibility="collapsed")
                             st.download_button(
                                 "📥 Export CSV", 
                                 pd.DataFrame(skus).to_csv(index=False, header=False).encode('utf-8'), 
-                                f"{c_name.replace(' ', '_')}.csv",
+                                f"{c_name.replace(' ', '_')}.csv", 
                                 key=f"btn_cw_{c_name}"
                             )
 
         # =========================================================================
-        # TAB 1: KAMPANJHINKAR (Bereinigt um Cyber Week Artikel zur Vermeidung von Duplikaten)
+        # 🚀 TAB 1: KAMPANJFÖRDELNING (BEREINIGTE BESTEHENDE KAMPAGNEN)
         # =========================================================================
         with tab1:
-            st.header(f"📊 Kampanjhinkar per Kluster (Vecka {latest_week})")
-            st.info("💡 **Deduplizierungs-Hinweis:** Artikel von Swedemount und Denim Factory in den Cyber Week Ländern (DE, CH, AT, DK, NL, IT, FR) werden vorrangig in den Cyber Week Kampagnen geführt.")
+            st.header(f"📊 Reguläre Kampagnenhinker (Vecka {latest_week})")
+            st.info("""
+            **Deduplizierungs- und Sponsoring-Regel:**
+            * In **CW-Ländern** (`DE, CH, AT, DK, NL, IT, FR`) wurden Swedemount & Denim Factory entfernt. Dort laufen nur die **übrigen Marken** (Slade, Seaside, Ellen New York etc.).
+            * In **Nicht-CW-Ländern** (`SE, ES, BE, FI, PL, CZ` etc.) verbleiben **alle Marken** (inkl. Swedemount & Denim Factory) in den Hinkern.
+            """)
+
+            # Filterlogik für bestehende Kampagnen:
+            # Wenn Land in CW_COUNTRIES und Marke in CW_BRANDS -> AUSSCHLIESSEN!
+            is_in_cw_country = df_m_latest['Target_Country'].isin(CW_COUNTRIES)
+            is_cw_brand = df_m_latest['Brand_Clean'].str.lower().isin(CW_BRANDS)
             
-            m_agg_global = df_m_filtered.groupby('Article').agg({'GMV_Val':'sum', 'Spend_Val':'sum'}).reset_index()
-            df_global = pd.merge(m_agg_global, df_s_valid[['Article', 'Total_Stock']], on='Article', how='inner')
+            # Maske: Zeige nur Artikel, die NICHT bereits in der Cyber Week des Landes gebucht sind
+            df_m_regular = df_m_latest[~(is_in_cw_country & is_cw_brand)].copy()
             
+            df_m_regular_filtered = df_m_regular[
+                df_m_regular['Cluster_Name'].isin(selected_clusters) & 
+                df_m_regular['Target_Country'].isin(selected_countries)
+            ]
+
+            m_agg_reg = df_m_regular_filtered.groupby('Article').agg({'GMV_Val':'sum', 'Spend_Val':'sum'}).reset_index()
+            df_reg_global = pd.merge(m_agg_reg, df_s_valid[['Article', 'Total_Stock']], on='Article', how='inner')
+
             col_m1, col_m2, col_m3 = st.columns(3)
-            col_m1.metric("Unika Matchade Artiklar", len(df_global))
-            col_m2.metric("Overall ROAS (Senaste v.)", f"{(df_global['GMV_Val'].sum()/df_global['Spend_Val'].sum()):.2f}" if df_global['Spend_Val'].sum() > 0 else "0.0")
-            col_m3.metric("Matchat ZFS-lager", f"{df_global['Total_Stock'].sum():,.0f} enheter")
+            col_m1.metric("Reguläre Artikel im Umlauf", len(df_reg_global))
+            col_m2.metric("Regulärer ROAS", f"{(df_reg_global['GMV_Val'].sum()/df_reg_global['Spend_Val'].sum()):.2f}" if df_reg_global['Spend_Val'].sum() > 0 else "0.0")
+            col_m3.metric("ZFS-Lager (Regulär)", f"{df_reg_global['Total_Stock'].sum():,.0f} Stk.")
             st.divider()
 
             if not selected_clusters:
@@ -368,23 +337,29 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
             else:
                 for cluster in selected_clusters:
                     with st.expander(f"📁 **Kampanjhinkar för {cluster}**", expanded=True):
-                        df_c_latest = df_m_latest[
-                            (df_m_latest['Cluster_Name'] == cluster) & 
-                            (df_m_latest['Target_Country'].isin(selected_countries))
+                        df_c_latest = df_m_regular[
+                            (df_m_regular['Cluster_Name'] == cluster) & 
+                            (df_m_regular['Target_Country'].isin(selected_countries))
                         ]
                         
+                        # Kennzeichnung, welche Länder im Kluster CW sind und welche Nicht-CW
+                        cluster_countries = df_c_latest['Target_Country'].unique().tolist()
+                        cw_in_cluster = [c for c in cluster_countries if c in CW_COUNTRIES]
+                        non_cw_in_cluster = [c for c in cluster_countries if c not in CW_COUNTRIES]
+                        
+                        st.caption(f"Status in diesem Kluster: CW-Länder (nur Rest-Marken): `{', '.join(cw_in_cluster) if cw_in_cluster else 'Keine'}` | Nicht-CW (alle Marken inkl. Swedemount): `{', '.join(non_cw_in_cluster) if non_cw_in_cluster else 'Keine'}`")
+
                         df_c_agg = df_c_latest.groupby('Article').agg({'GMV_Val':'sum', 'Spend_Val':'sum'}).reset_index()
                         df_c_agg['ROAS_Actual'] = df_c_agg['GMV_Val'] / df_c_agg['Spend_Val'].replace(0, 1)
-                        
                         df_c_merged = pd.merge(df_c_agg, df_s_valid[['Article', 'Total_Stock']], on='Article', how='inner')
-                        
+
                         def assign_tier(row):
                             if row['Total_Stock'] >= t_stock and row['ROAS_Actual'] >= t_roas: return 'TOP'
                             elif row['Total_Stock'] >= m_stock and row['ROAS_Actual'] >= m_roas: return 'MEDIUM'
                             return 'LOW'
-                        
+
                         df_c_merged['Tier'] = df_c_merged.apply(assign_tier, axis=1)
-                        
+
                         c_cols = st.columns(3)
                         for i, tier in enumerate(['TOP', 'MEDIUM', 'LOW']):
                             with c_cols[i]:
@@ -393,16 +368,27 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
                                 st.markdown(f"#### {tier}")
                                 st.metric("Artiklar", len(skus))
                                 st.text_area("SKU List", ",".join(skus), height=200, key=f"t_{cluster}_{tier}", label_visibility="collapsed")
-                                st.download_button(f"Export {tier} CSV", pd.DataFrame(skus).to_csv(index=False, header=False).encode('utf-8'), f"{cluster}_{tier}_articles.csv", key=f"d_{cluster}_{tier}")
+                                st.download_button(
+                                    f"Export {tier} CSV", 
+                                    pd.DataFrame(skus).to_csv(index=False, header=False).encode('utf-8'), 
+                                    f"{cluster}_{tier}_articles.csv", 
+                                    key=f"d_{cluster}_{tier}"
+                                )
 
+        # =========================================================================
+        # TAB 2: VARUMÄRKESÖVERSIKT
+        # =========================================================================
         with tab2:
             st.header("🏷️ Varumärkesöversikt")
-            df_m_agg_brand = df_m_filtered.groupby('Article').agg({'GMV_Val':'sum', 'Spend_Val':'sum', 'Sold_Val':'sum'}).reset_index()
+            df_m_agg_brand = df_m_latest.groupby('Article').agg({'GMV_Val':'sum', 'Spend_Val':'sum', 'Sold_Val':'sum'}).reset_index()
             df_brand_merged = pd.merge(df_m_agg_brand, df_s_valid[['Article', 'brand']], on='Article', how='inner')
             brand_stats = df_brand_merged.groupby('brand').agg({'Spend_Val': 'sum', 'GMV_Val': 'sum', 'Sold_Val': 'sum'}).reset_index()
             brand_stats['ROAS'] = (brand_stats['GMV_Val'] / brand_stats['Spend_Val'].replace(0, 1)).round(2)
             st.dataframe(brand_stats.sort_values('GMV_Val', ascending=False), use_container_width=True, hide_index=True)
 
+        # =========================================================================
+        # TAB 3: SYNC STATUS
+        # =========================================================================
         with tab3:
             st.header("🔄 Sync Status & Clean-up")
             col_d, col_m = st.columns(2)
@@ -415,35 +401,42 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
             with col_m:
                 st.markdown("**Missing from ZMS (ZFS-lager > 10, Valda Säsonger)**")
                 inv_skus = set(df_s_valid['Article'])
-                zms_skus = set(df_m_filtered['Article'])
+                zms_skus = set(df_m_latest['Article'])
                 missing = list(inv_skus - zms_skus)
                 st.dataframe(df_s_valid[(df_s_valid['Article'].isin(missing)) & (df_s_valid['Total_Stock'] > 10)][['Article', 'Total_Stock', 'Season']], use_container_width=True)
 
+        # =========================================================================
+        # TAB 4: LANDSKLUSTRING
+        # =========================================================================
         with tab4:
             st.header("🌍 Manuella Landskluster - Översikt")
             df_c_summary = df_m_raw.groupby(['Target_Country', 'Cluster_Name']).agg({'Spend_Val': 'sum', 'Clicks_Val': 'sum', 'GMV_Val': 'sum', 'Impressions_Val': 'sum'}).reset_index()
             df_c_summary['CPC'] = (df_c_summary['Spend_Val'] / df_c_summary['Clicks_Val'].replace(0, 1)).round(2)
             df_c_summary['ROAS'] = (df_c_summary['GMV_Val'] / df_c_summary['Spend_Val'].replace(0, 1)).round(2)
+            df_c_summary['Cyber_Week_Sponsoring'] = df_c_summary['Target_Country'].apply(lambda x: 'Ja (200k Pool)' if x in CW_COUNTRIES else 'Nein (Regulär)')
             st.dataframe(df_c_summary.sort_values('Cluster_Name'), use_container_width=True, hide_index=True)
             st.download_button("📥 Ladda ner Klusterdata CSV", df_c_summary.to_csv(index=False).encode('utf-8'), "manual_country_clusters.csv")
 
+        # =========================================================================
+        # TAB 5: LANDSJÄMFÖRELSE
+        # =========================================================================
         with tab5:
             st.header("📈 Landsjämförelse & Trendanalys")
             if country_col:
                 df_comp_raw = df_m_raw[df_m_raw['Target_Country'].isin(selected_countries)]
-                comp_type = st.radio("Välj tidsram för jämförelse:", ["Månad över Månad (MoM)", "Vecka för Vecka (Trend upp till 3 veckor)"])
+                comp_type = st.radio("Välj tidsram:", ["Månad över Månad (MoM)", "Vecka för Vecka (Trend upp till 3 veckor)"])
                 if comp_type == "Månad över Månad (MoM)":
                     months = sorted(df_comp_raw['Month_Num'].unique())
                     if len(months) >= 2:
-                        sel_m = st.selectbox("Välj huvudmånad:", options=months, index=len(months)-1, key="comp_m_main")
+                        sel_m = st.selectbox("Huvudmånad:", options=months, index=len(months)-1, key="comp_m_main")
                         prev_m = months[months.index(sel_m) - 1] if months.index(sel_m) > 0 else None
                         if prev_m is not None:
-                            st.info(f"Visar Månad {sel_m} jämfört med Månad {prev_m}")
+                            st.info(f"Månad {sel_m} jämfört med Månad {prev_m}")
                             df_m_stats = df_comp_raw[df_comp_raw['Month_Num'].isin([sel_m, prev_m])].groupby(['Target_Country', 'Month_Num']).agg({'Spend_Val': 'sum', 'Impressions_Val': 'sum', 'Clicks_Val': 'sum', 'GMV_Val': 'sum'}).reset_index()
                             df_m_stats['ROAS'] = (df_m_stats['GMV_Val'] / df_m_stats['Spend_Val'].replace(0, 1)).round(2)
                             df_m_stats['COS (%)'] = ((df_m_stats['Spend_Val'] / df_m_stats['GMV_Val'].replace(0, 1)) * 100).round(1)
                             df_m_stats['CPC'] = (df_m_stats['Spend_Val'] / df_m_stats['Clicks_Val'].replace(0, 1)).round(2)
-                            metric_to_plot = st.selectbox("Välj mätetal för grafen:", ["ROAS", "COS (%)", "CPC", "Impressions", "GMV", "Budget Spent"], key="m_metric")
+                            metric_to_plot = st.selectbox("Mätetal för grafen:", ["ROAS", "COS (%)", "CPC", "Impressions", "GMV", "Budget Spent"], key="m_metric")
                             plot_map = {"ROAS": "ROAS", "COS (%)": "COS (%)", "CPC": "CPC", "Impressions": "Impressions_Val", "GMV": "GMV_Val", "Budget Spent": "Spend_Val"}
                             df_plot = df_m_stats.copy()
                             df_plot['Tidsperiod'] = df_plot['Month_Num'].apply(lambda x: f"Månad {x}")
@@ -454,13 +447,13 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
                 else:
                     weeks = sorted(df_comp_raw['Week_Num'].unique())
                     if len(weeks) >= 1:
-                        selected_weeks = st.multiselect("Välj upp till 3 veckor:", options=weeks, default=weeks[-3:] if len(weeks) >= 3 else weeks, max_selections=3)
+                        selected_weeks = st.multiselect("Välj veckor:", options=weeks, default=weeks[-3:] if len(weeks) >= 3 else weeks, max_selections=3)
                         if selected_weeks:
                             df_w_stats = df_comp_raw[df_comp_raw['Week_Num'].isin(selected_weeks)].groupby(['Target_Country', 'Week_Num']).agg({'Spend_Val': 'sum', 'Impressions_Val': 'sum', 'Clicks_Val': 'sum', 'GMV_Val': 'sum'}).reset_index()
                             df_w_stats['ROAS'] = (df_w_stats['GMV_Val'] / df_w_stats['Spend_Val'].replace(0, 1)).round(2)
                             df_w_stats['COS (%)'] = ((df_w_stats['Spend_Val'] / df_w_stats['GMV_Val'].replace(0, 1)) * 100).round(1)
                             df_w_stats['CPC'] = (df_w_stats['Spend_Val'] / df_w_stats['Clicks_Val'].replace(0, 1)).round(2)
-                            metric_to_plot = st.selectbox("Välj mätetal för grafen:", ["ROAS", "COS (%)", "CPC", "Impressions", "GMV", "Budget Spent"], key="w_metric")
+                            metric_to_plot = st.selectbox("Mätetal för grafen:", ["ROAS", "COS (%)", "CPC", "Impressions", "GMV", "Budget Spent"], key="w_metric")
                             plot_map = {"ROAS": "ROAS", "COS (%)": "COS (%)", "CPC": "CPC", "Impressions": "Impressions_Val", "GMV": "GMV_Val", "Budget Spent": "Spend_Val"}
                             df_plot = df_w_stats.copy()
                             df_plot['Tidsperiod'] = df_plot['Week_Num'].apply(lambda x: f"Vecka {x}")
@@ -478,19 +471,14 @@ if z_marketing := st.sidebar.file_uploader("1. SKU Report (Country Split)", type
         # =========================================================================
         with tab6:
             st.header("👁️ Synlighetsanalys per Variant (Färg) & Marknad")
-            st.markdown("Översikt på **variant-nivå (färg)** för artiklar drabbade av låg synlighet (`low_visibility`).")
-
             if vis_file_curr is not None:
                 df_curr_raw = load_csv(vis_file_curr)
                 v_col_c = next((c for c in df_curr_raw.columns if 'visibility' in str(c).lower() and 'reason' not in str(c).lower()), None)
                 if not v_col_c and len(df_curr_raw.columns) > 21: v_col_c = df_curr_raw.columns[21]
-                
                 r_col_c = next((c for c in df_curr_raw.columns if 'low_visibility_reason' in str(c).lower()), None)
                 if not r_col_c and len(df_curr_raw.columns) > 22: r_col_c = df_curr_raw.columns[22]
-                
                 c_col_c = next((c for c in df_curr_raw.columns if 'country' in str(c).lower() or 'target' in str(c).lower()), None)
                 if not c_col_c and len(df_curr_raw.columns) > 14: c_col_c = df_curr_raw.columns[14]
-                
                 var_col_c = next((c for c in df_curr_raw.columns if any(x in str(c).lower() for x in ['partner_article_variant', 'zalando_article_variant', 'variant_sku'])), None)
                 sku_col_c = next((c for c in df_curr_raw.columns if any(x in str(c).lower() for x in ['partner_article', 'configsku', 'sku'])), None)
                 if not var_col_c: var_col_c = sku_col_c if sku_col_c else df_curr_raw.columns[1]
